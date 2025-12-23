@@ -81,20 +81,22 @@ $users_new_prev = $stmt->fetchColumn();
 $user_growth = calculateGrowth($users_new_curr, $users_new_prev);
 
 // --- B. DOANH THU & ĐƠN HÀNG ---
-$stmt = $pdo->prepare("SELECT COUNT(*) as tong_don, COALESCE(SUM(tong_tien), 0) as tong_tien FROM don_hang WHERE $date_condition AND trang_thai != 'HUY'");
+// Chỉ tính đơn hàng đã hoàn tất (HOAN_TAT)
+$stmt = $pdo->prepare("SELECT COUNT(*) as tong_don, COALESCE(SUM(tong_tien), 0) as tong_tien FROM don_hang WHERE $date_condition AND trang_thai = 'HOAN_TAT'");
 $stmt->execute($params);
-$curr_order_stats = $stmt->fetch();
+$curr_revenue_stats = $stmt->fetch();
+
 $revenue_stats = [
-    'tong_don_hang' => $curr_order_stats['tong_don'],
-    'tong_doanh_thu' => $curr_order_stats['tong_tien']
+    'tong_don_hang' => $curr_revenue_stats['tong_don'],
+    'tong_doanh_thu' => $curr_revenue_stats['tong_tien']
 ];
 
-$stmt = $pdo->prepare("SELECT COUNT(*) as tong_don, COALESCE(SUM(tong_tien), 0) as tong_tien FROM don_hang WHERE $prev_date_condition AND trang_thai != 'HUY'");
+$stmt = $pdo->prepare("SELECT COUNT(*) as tong_don, COALESCE(SUM(tong_tien), 0) as tong_tien FROM don_hang WHERE $prev_date_condition AND trang_thai = 'HOAN_TAT'");
 $stmt->execute($prev_params);
-$prev_order_stats = $stmt->fetch();
+$prev_revenue_stats = $stmt->fetch();
 
-$revenue_growth = calculateGrowth($curr_order_stats['tong_tien'], $prev_order_stats['tong_tien']);
-$order_growth = calculateGrowth($curr_order_stats['tong_don'], $prev_order_stats['tong_don']);
+$revenue_growth = calculateGrowth($curr_revenue_stats['tong_tien'], $prev_revenue_stats['tong_tien']);
+$order_growth = calculateGrowth($curr_revenue_stats['tong_don'], $prev_revenue_stats['tong_don']);
 
 // --- C. SẢN PHẨM ---
 $stmt = $pdo->query("SELECT COUNT(*) as total FROM san_pham WHERE trang_thai = 'DANG_BAN'");
@@ -118,25 +120,54 @@ $stmt = $pdo->prepare("SELECT d.*, n.ho_ten, n.email FROM don_hang d LEFT JOIN n
 $stmt->execute();
 $recent_orders = $stmt->fetchAll();
 
+// --- E. SẢN PHẨM BÁN CHẠY (LOGIC MỚI: GỘP THEO SẢN PHẨM CHA) ---
+// Nhóm theo ID sản phẩm gốc để tính tổng số lượng bán của tất cả SKU
 $date_condition_alias = str_replace("tao_luc", "dh.tao_luc", $date_condition);
-$stmt = $pdo->prepare("SELECT ct.san_pham_id, ct.ten_san_pham, 
-        anh.url_anh as anh_dai_dien_url, 
-        SUM(ct.so_luong) as tong_ban, SUM(ct.thanh_tien) as doanh_thu 
-FROM chi_tiet_don_hang ct 
-LEFT JOIN don_hang dh ON ct.don_hang_id = dh.id 
-LEFT JOIN san_pham sp ON ct.san_pham_id = sp.id 
-LEFT JOIN anh_san_pham anh ON sp.anh_dai_dien_url = anh.id
-WHERE $date_condition_alias AND dh.trang_thai != 'HUY' 
-GROUP BY ct.san_pham_id, ct.ten_san_pham, anh.url_anh 
-ORDER BY tong_ban DESC LIMIT 5");
+$stmt = $pdo->prepare("
+    SELECT sp.id, sp.ten_san_pham, 
+           COALESCE(ap.url_anh, sp.anh_dai_dien_url) as anh_url,  -- Ưu tiên ảnh từ bảng ảnh
+           SUM(ct.so_luong) as tong_ban, 
+           SUM(ct.thanh_tien) as doanh_thu 
+    FROM chi_tiet_don_hang ct 
+    LEFT JOIN don_hang dh ON ct.don_hang_id = dh.id 
+    LEFT JOIN san_pham sp ON ct.san_pham_id = sp.id 
+    LEFT JOIN anh_san_pham ap ON sp.anh_dai_dien_url = ap.id -- Nếu anh_dai_dien_url là ID
+    WHERE $date_condition_alias AND dh.trang_thai = 'HOAN_TAT' 
+    GROUP BY sp.id, sp.ten_san_pham, anh_url 
+    ORDER BY tong_ban DESC LIMIT 5
+");
 $stmt->execute($params);
 $top_products = $stmt->fetchAll();
 
 $revenue_by_day = [];
 if ($period === 'month') {
-    $stmt = $pdo->prepare("SELECT DATE(tao_luc) as ngay, COALESCE(SUM(tong_tien), 0) as doanh_thu FROM don_hang WHERE YEAR(tao_luc) = ? AND MONTH(tao_luc) = ? AND trang_thai != 'HUY' GROUP BY DATE(tao_luc) ORDER BY ngay DESC LIMIT 7");
+    // Chỉ tính đơn hoàn tất cho biểu đồ
+    $stmt = $pdo->prepare("SELECT DATE(tao_luc) as ngay, COALESCE(SUM(tong_tien), 0) as doanh_thu FROM don_hang WHERE YEAR(tao_luc) = ? AND MONTH(tao_luc) = ? AND trang_thai = 'HOAN_TAT' GROUP BY DATE(tao_luc) ORDER BY ngay DESC LIMIT 7");
     $stmt->execute([$year, $month]);
     $revenue_by_day = array_reverse($stmt->fetchAll());
+}
+
+function getProductImageUrl($dbPath) {
+    // Nếu rỗng, trả về ảnh mặc định
+    if (empty($dbPath)) {
+        return 'assets/images/no-image.png';
+    }
+    
+    // Nếu $dbPath là số (ID), cần truy vấn lại URL thật (hoặc xử lý ở SQL như bước 1)
+    if (is_numeric($dbPath)) {
+        // Đây là ID tham chiếu đến bảng anh_san_pham
+        // Với truy vấn đã sửa ở Bước 1, $dbPath đã là URL thật
+        return $dbPath;
+    }
+    
+    // Nếu $dbPath là đường dẫn đầy đủ từ gốc (có PTUD_Final/)
+    if (strpos($dbPath, 'PTUD_Final/') === 0) {
+        // Loại bỏ PTUD_Final/ để lấy đường dẫn tương đối
+        return '../' . substr($dbPath, strlen('PTUD_Final/'));
+    }
+    
+    // Nếu đã là đường dẫn tương đối đúng (từ thư mục admin-main)
+    return $dbPath;
 }
 
 include 'includes/header.php';
@@ -151,21 +182,21 @@ include 'includes/header.php';
     background-color: #fff;
     height: 100%;
 }
-.stat-card:hover {class="rounded-3 border" width="50" height="50" style="object-fit: cover;"
+.stat-card:hover {
     transform: translateY(-3px);
     box-shadow: 0 10px 20px rgba(0,0,0,0.05) !important;
 }
 .stat-card h4 { font-size: 1.25rem; }
 
-/* --- Icons --- */
+/* --- Icons: Adjusted Size --- */
 .stat-icon-box {
-    width: 50px;
-    height: 50px;
-    border-radius: 12px;
+    width: 42px;  /* Giảm kích thước icon để tiết kiệm chỗ */
+    height: 42px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     flex-shrink: 0;
 }
 .bg-indigo-soft { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
@@ -175,19 +206,28 @@ include 'includes/header.php';
 
 /* --- Growth Badge --- */
 .growth-badge {
-    font-size: 0.7rem;
+    font-size: 0.65rem; /* Giảm nhẹ font size badge */
     font-weight: 700;
-    padding: 3px 8px;
+    padding: 3px 6px;
     border-radius: 6px;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 2px;
     line-height: 1;
     white-space: nowrap;
 }
 .growth-up { color: #059669; background-color: #d1fae5; }
 .growth-down { color: #dc2626; background-color: #fee2e2; }
 .growth-neutral { color: #4b5563; background-color: #f3f4f6; }
+
+/* --- Text Styles for Stats --- */
+.stat-label {
+    font-size: 0.7rem; 
+    font-weight: 700; 
+    text-transform: uppercase; 
+    color: #6c757d;
+    white-space: nowrap; /* Giữ trên 1 dòng nếu đủ chỗ */
+}
 
 /* --- Chart Layout --- */
 .chart-wrapper {
@@ -248,13 +288,11 @@ include 'includes/header.php';
 .min-w-0 { min-width: 0 !important; }
 
 /* --- CSS FIX RESPONSIVE --- */
-/* Mobile (dưới 576px): Filter dãn full, Stat Card full width */
 @media (max-width: 576px) {
     .filter-form { width: 100%; }
     .filter-form select, .filter-form button { width: 100% !important; margin-bottom: 5px; }
     .stat-icon-box { width: 45px; height: 45px; font-size: 1.1rem; }
 }
-/* Desktop: Select box auto width */
 @media (min-width: 768px) {
     .w-md-auto { width: auto !important; }
 }
@@ -328,13 +366,13 @@ include 'includes/header.php';
             <div class="col-12 col-sm-6 col-lg-3">
                 <div class="card stat-card shadow-sm">
                     <div class="card-body p-3">
-                        <div class="d-flex align-items-start gap-3">
+                        <div class="d-flex align-items-center gap-3">
                             <div class="stat-icon-box bg-indigo-soft">
                                 <i class="fas fa-users"></i>
                             </div>
                             <div class="flex-grow-1 min-w-0">
-                                <div class="d-flex justify-content-between align-items-start mb-1">
-                                    <span class="text-secondary text-xs fw-bold text-uppercase">Khách hàng</span>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="stat-label">Khách hàng</span>
                                     <?php if ($period !== 'all'): 
                                         $class = $user_growth > 0 ? 'growth-up' : ($user_growth < 0 ? 'growth-down' : 'growth-neutral');
                                         $icon = $user_growth > 0 ? 'fa-arrow-up' : ($user_growth < 0 ? 'fa-arrow-down' : 'fa-minus');
@@ -355,13 +393,13 @@ include 'includes/header.php';
             <div class="col-12 col-sm-6 col-lg-3">
                 <div class="card stat-card shadow-sm">
                     <div class="card-body p-3">
-                        <div class="d-flex align-items-start gap-3">
+                        <div class="d-flex align-items-center gap-3">
                             <div class="stat-icon-box bg-emerald-soft">
                                 <i class="fas fa-wallet"></i>
                             </div>
                             <div class="flex-grow-1 min-w-0">
-                                <div class="d-flex justify-content-between align-items-start mb-1">
-                                    <span class="text-secondary text-xs fw-bold text-uppercase">Doanh thu</span>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="stat-label">Doanh thu</span>
                                     <?php if ($period !== 'all'): 
                                         $class = $revenue_growth > 0 ? 'growth-up' : ($revenue_growth < 0 ? 'growth-down' : 'growth-neutral');
                                         $icon = $revenue_growth > 0 ? 'fa-arrow-up' : ($revenue_growth < 0 ? 'fa-arrow-down' : 'fa-minus');
@@ -382,13 +420,13 @@ include 'includes/header.php';
             <div class="col-12 col-sm-6 col-lg-3">
                 <div class="card stat-card shadow-sm">
                     <div class="card-body p-3">
-                        <div class="d-flex align-items-start gap-3">
+                        <div class="d-flex align-items-center gap-3">
                             <div class="stat-icon-box bg-orange-soft">
                                 <i class="fas fa-shopping-bag"></i>
                             </div>
                             <div class="flex-grow-1 min-w-0">
-                                <div class="d-flex justify-content-between align-items-start mb-1">
-                                    <span class="text-secondary text-xs fw-bold text-uppercase">Đơn hàng</span>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="stat-label">Đơn thành công</span>
                                     <?php if ($period !== 'all'): 
                                         $class = $order_growth > 0 ? 'growth-up' : ($order_growth < 0 ? 'growth-down' : 'growth-neutral');
                                         $icon = $order_growth > 0 ? 'fa-arrow-up' : ($order_growth < 0 ? 'fa-arrow-down' : 'fa-minus');
@@ -399,7 +437,7 @@ include 'includes/header.php';
                                     <?php endif; ?>
                                 </div>
                                 <h4 class="fw-bold text-dark mb-0"><?php echo number_format($revenue_stats['tong_don_hang']); ?></h4>
-                                <div class="text-xs text-secondary mt-1 text-truncate">Đơn thành công</div>
+                                <div class="text-xs text-secondary mt-1 text-truncate">Đã thanh toán</div>
                             </div>
                         </div>
                     </div>
@@ -409,13 +447,13 @@ include 'includes/header.php';
             <div class="col-12 col-sm-6 col-lg-3">
                 <div class="card stat-card shadow-sm">
                     <div class="card-body p-3">
-                        <div class="d-flex align-items-start gap-3">
+                        <div class="d-flex align-items-center gap-3">
                             <div class="stat-icon-box bg-sky-soft">
                                 <i class="fas fa-box-open"></i>
                             </div>
                             <div class="flex-grow-1 min-w-0">
-                                <div class="d-flex justify-content-between align-items-start mb-1">
-                                    <span class="text-secondary text-xs fw-bold text-uppercase">Sản phẩm</span>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="stat-label">Sản phẩm</span>
                                     <?php if ($period !== 'all'): 
                                         $class = $product_growth > 0 ? 'growth-up' : ($product_growth < 0 ? 'growth-down' : 'growth-neutral');
                                         $icon = $product_growth > 0 ? 'fa-arrow-up' : ($product_growth < 0 ? 'fa-arrow-down' : 'fa-minus');
@@ -450,13 +488,11 @@ include 'includes/header.php';
                             </div>
                         <?php else: ?>
                             <?php 
-                                // Tìm giá trị lớn nhất
                                 $raw_max = 0;
                                 foreach($revenue_by_day as $d) {
                                     if($d['doanh_thu'] > $raw_max) $raw_max = $d['doanh_thu'];
                                 }
                                 
-                                // Tính mốc chẵn cho trục Y
                                 if ($raw_max == 0) {
                                     $max_revenue = 100000;
                                 } else {
@@ -571,7 +607,7 @@ include 'includes/header.php';
                                     <?php foreach ($recent_orders as $order): ?>
                                     <tr>
                                         <td class="ps-4">
-                                            <span class="badge bg-light text-dark border font-monospace">#<?php echo $order['id']; ?></span>
+                                            <span class="badge bg-light text-dark border font-monospace"><?php echo $order['ma_don_hang']; ?></span>
                                         </td>
                                         <td>
                                             <div class="fw-medium text-dark"><?php echo htmlspecialchars($order['ho_ten'] ?? 'Khách vãng lai'); ?></div>
@@ -604,24 +640,8 @@ include 'includes/header.php';
                             <?php foreach ($top_products as $index => $product): ?>
                                 <div class="product-item d-flex align-items-center gap-3 mb-2">
                                     <div class="position-relative">
-                                        <?php
-                                        // Lấy và chuẩn hóa URL ảnh
-                                        $imageUrl = 'https://placehold.co/50x50';
-                                        if (!empty($product['anh_dai_dien_url'])) {
-                                            $url = $product['anh_dai_dien_url'];
-                                            
-                                            // Đảm bảo có dấu / ở đầu
-                                            if (strpos($url, '/') !== 0) {
-                                                $url = '/' . $url;
-                                            }
-                                            
-                                            // Thêm domain localhost
-                                            $imageUrl = 'http://localhost' . $url;
-                                        }
-                                        ?>
-                                        <img src="<?php echo htmlspecialchars($imageUrl); ?>" 
-                                            class="rounded-3 border" width="50" height="50" style="object-fit: cover;"
-                                            onerror="this.src='https://placehold.co/50x50'">
+                                            <img src="<?php echo getProductImageUrl($product['anh_url'] ?? $product['anh_dai_dien_url']); ?>"  
+                                             class="rounded-3 border" width="50" height="50" style="object-fit: cover;">
                                         <span class="position-absolute top-0 start-0 m-1 badge rounded-pill bg-dark border border-white text-xs">
                                             <?php echo $index + 1; ?>
                                         </span>

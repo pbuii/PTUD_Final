@@ -21,6 +21,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $so_luong_ton = intval($_POST['so_luong_ton']);
         $trang_thai = $_POST['trang_thai'];
         $anh_dai_dien_url = sanitize($_POST['anh_dai_dien_url']);
+
+        if ($danh_muc_id) {
+            $stmt = $pdo->prepare("SELECT trang_thai FROM danh_muc_san_pham WHERE id = ?");
+            $stmt->execute([$danh_muc_id]);
+            $category_status = $stmt->fetchColumn();
+            
+            if ($category_status === 'NGUNG_HOAT_DONG' && $trang_thai === 'DANG_BAN') {
+                showMessage('Không thể đặt trạng thái "Đang bán" khi danh mục đang ngưng hoạt động!', 'danger');
+                redirect('products.php');
+            }
+        }
         
         try {
             if ($action === 'add') {
@@ -56,7 +67,7 @@ $search = $_GET['search'] ?? '';
 $category_filter = $_GET['category'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 
-$sql = "SELECT sp.*, dm.ten_danh_muc 
+$sql = "SELECT sp.*, dm.ten_danh_muc, dm.trang_thai as dm_trang_thai 
         FROM san_pham sp 
         LEFT JOIN danh_muc_san_pham dm ON sp.danh_muc_id = dm.id 
         WHERE 1=1";
@@ -85,6 +96,37 @@ $products = $stmt->fetchAll();
 
 // Lấy danh mục để show trong filter và form
 $categories = $pdo->query("SELECT * FROM danh_muc_san_pham WHERE trang_thai = 'HOAT_DONG' ORDER BY ten_danh_muc")->fetchAll();
+
+// === THÊM HÀM XỬ LÝ ẢNH ===
+function getProductImageUrl($dbPath, $pdo = null) {
+    // Nếu rỗng, trả về ảnh mặc định
+    if (empty($dbPath)) {
+        return 'https://placehold.co/80x80?text=No+Image';
+    }
+    
+    // Nếu $dbPath là số (ID), truy vấn bảng anh_san_pham
+    if (is_numeric($dbPath) && $pdo) {
+        try {
+            $stmt = $pdo->prepare("SELECT url_anh FROM anh_san_pham WHERE id = ? LIMIT 1");
+            $stmt->execute([$dbPath]);
+            $row = $stmt->fetch();
+            
+            if ($row && !empty($row['url_anh'])) {
+                // Xử lý đường dẫn ảnh thực
+                $realPath = $row['url_anh'];
+                // Chuyển đổi đường dẫn có PTUD_Final/
+                if (strpos($realPath, 'PTUD_Final/') === 0) {
+                    return '../' . substr($realPath, strlen('PTUD_Final/'));
+                }
+                return $realPath;
+            }
+        } catch (Exception $e) {
+            // Lỗi thì trả về ảnh mặc định
+        }
+        return 'https://placehold.co/80x80?text=Error';
+    }
+    // Nếu đã là đường dẫn tương đối đúng
+    return $dbPath;}
 
 include 'includes/header.php';
 ?>
@@ -152,6 +194,9 @@ include 'includes/header.php';
                                 <option value="NGUNG_BAN">Ngừng bán</option>
                                 <option value="DA_GO">Đã gỡ</option>
                             </select>
+                            <div id="statusHelp" class="form-text text-danger" style="display: none;">
+                                <i class="fas fa-exclamation-triangle me-1"></i>Danh mục này đang ngưng hoạt động, không thể đặt trạng thái "Đang bán"
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -259,7 +304,7 @@ include 'includes/header.php';
                                 <tr>
                                     <td class="ps-4">
                                         <div class="d-flex align-items-center gap-3">
-                                            <img src="<?php echo $product['anh_dai_dien_url'] ?: 'https://placehold.co/80x80?text=No+Image'; ?>" 
+                                            <img src="<?php echo getProductImageUrl($product['anh_dai_dien_url'], $pdo); ?>" 
                                                  class="rounded-3 border" width="60" height="60" 
                                                  style="object-fit: cover;" alt="<?php echo $product['ten_san_pham']; ?>">
                                             <div>
@@ -314,21 +359,6 @@ document.addEventListener('DOMContentLoaded', function() {
     productModal = new bootstrap.Modal(document.getElementById('productModal'));
 });
 
-function openModal() {
-    document.getElementById('formAction').value = 'add';
-    document.getElementById('modalTitle').innerText = 'Thêm sản phẩm';
-    document.getElementById('productId').value = '';
-    document.getElementById('productName').value = '';
-    document.getElementById('productSlug').value = '';
-    document.getElementById('productCategory').value = '';
-    document.getElementById('productDesc').value = '';
-    document.getElementById('productPrice').value = '';
-    document.getElementById('productStock').value = '';
-    document.getElementById('productImage').value = '';
-    document.getElementById('productStatus').value = 'DANG_BAN';
-    productModal.show();
-}
-
 function editProduct(product) {
     document.getElementById('formAction').value = 'edit';
     document.getElementById('modalTitle').innerText = 'Chỉnh sửa sản phẩm';
@@ -341,8 +371,115 @@ function editProduct(product) {
     document.getElementById('productStock').value = product.so_luong_ton;
     document.getElementById('productImage').value = product.anh_dai_dien_url || '';
     document.getElementById('productStatus').value = product.trang_thai;
+    
+    // QUAN TRỌNG: Kiểm tra trạng thái danh mục
+    // Nếu danh mục đang NGUNG_HOAT_DONG, disable option "Đang bán"
+    const statusSelect = document.getElementById('productStatus');
+    const dangBanOption = statusSelect.querySelector('option[value="DANG_BAN"]');
+    
+    if (product.dm_trang_thai === 'NGUNG_HOAT_DONG') {
+        // Disable option "Đang bán"
+        if (dangBanOption) {
+            dangBanOption.disabled = true;
+            dangBanOption.title = "Không thể đặt 'Đang bán' khi danh mục đang ngưng hoạt động";
+        }
+        
+        // Nếu sản phẩm đang là DANG_BAN, chuyển về NGUNG_BAN
+        if (product.trang_thai === 'DANG_BAN') {
+            statusSelect.value = 'NGUNG_BAN';
+        }
+    } else {
+        // Nếu danh mục HOAT_DONG, enable lại option
+        if (dangBanOption) {
+            dangBanOption.disabled = false;
+            dangBanOption.title = "";
+        }
+    }
+
+    const statusHelp = document.getElementById('statusHelp');
+        
+        if (product.dm_trang_thai === 'NGUNG_HOAT_DONG') {
+            // Hiển thị thông báo
+            statusHelp.style.display = 'block';
+            
+            // Disable option "Đang bán"
+            if (dangBanOption) {
+                dangBanOption.disabled = true;
+            }
+            
+            // Nếu sản phẩm đang là DANG_BAN, chuyển về NGUNG_BAN
+            if (product.trang_thai === 'DANG_BAN') {
+                statusSelect.value = 'NGUNG_BAN';
+            }
+        } else {
+            // Ẩn thông báo
+            statusHelp.style.display = 'none';
+            if (dangBanOption) {
+                dangBanOption.disabled = false;
+            }
+        }
+    
     productModal.show();
 }
+
+// Reset lại select khi mở modal thêm mới
+function openModal() {
+    document.getElementById('formAction').value = 'add';
+    document.getElementById('modalTitle').innerText = 'Thêm sản phẩm';
+    document.getElementById('productId').value = '';
+    document.getElementById('productName').value = '';
+    document.getElementById('productSlug').value = '';
+    document.getElementById('productCategory').value = '';
+    document.getElementById('productDesc').value = '';
+    document.getElementById('productPrice').value = '';
+    document.getElementById('productStock').value = '';
+    document.getElementById('productImage').value = '';
+    document.getElementById('productStatus').value = 'DANG_BAN';
+    
+    const statusSelect = document.getElementById('productStatus');
+    statusSelect.querySelectorAll('option').forEach(option => {
+        option.disabled = false;
+        option.title = "";
+    });
+    
+    // Ẩn thông báo khi thêm mới
+    document.getElementById('statusHelp').style.display = 'none';
+
+    productModal.show();
+}
+
+// Thêm sự kiện khi thay đổi danh mục
+document.addEventListener('DOMContentLoaded', function() {
+    const categorySelect = document.getElementById('productCategory');
+    const statusSelect = document.getElementById('productStatus');
+    const statusHelp = document.getElementById('statusHelp');
+    
+    // Cần lấy thông tin trạng thái của các danh mục từ server
+    const categoriesStatus = <?php echo json_encode(array_column($categories, 'trang_thai', 'id')); ?>;
+    
+    categorySelect.addEventListener('change', function() {
+        const selectedCatId = this.value;
+        const dangBanOption = statusSelect.querySelector('option[value="DANG_BAN"]');
+        
+        if (selectedCatId && categoriesStatus[selectedCatId] === 'NGUNG_HOAT_DONG') {
+            // Danh mục đang ngưng hoạt động
+            statusHelp.style.display = 'block';
+            if (dangBanOption) {
+                dangBanOption.disabled = true;
+            }
+            // Nếu đang chọn DANG_BAN, chuyển sang NGUNG_BAN
+            if (statusSelect.value === 'DANG_BAN') {
+                statusSelect.value = 'NGUNG_BAN';
+            }
+        } else {
+            statusHelp.style.display = 'none';
+            if (dangBanOption) {
+                dangBanOption.disabled = false;
+            }
+        }
+    });
+});
+
 </script>
 
 <?php include 'includes/footer.php'; ?>

@@ -61,6 +61,13 @@ if ($method === 'POST' && $path === '/api/dia-chi') {
     (new AddressController)->store(); 
     exit; 
 }
+
+// BỔ SUNG: Route PUT để cập nhật
+if ($method === 'PUT' && preg_match('#^/api/dia-chi/(\d+)$#', $path, $m)) { 
+    (new AddressController)->update((int)$m[1]); 
+    exit; 
+}
+
 if ($method === 'DELETE' && preg_match('#^/api/dia-chi/(\d+)$#', $path, $m)) { 
     (new AddressController)->delete((int)$m[1]); 
     exit; 

@@ -16,27 +16,49 @@ class AuthController {
         $so_dien_thoai = trim((string)($body['so_dien_thoai'] ?? ''));
         $ngay_sinh = trim((string)($body['ngay_sinh'] ?? ''));
 
-        if ($email === '' || !$this->validateEmail($email)) json(['error' => 'Email không hợp lệ'], 400);
+        // Kiểm tra cơ bản
+        if ($email === '' || !$this->validateEmail($email)) {
+            json(['error' => 'Email không hợp lệ'], 400);
+        }
         
-        // Giữ nguyên chuẩn 8 ký tự của Register
-        if (strlen($mat_khau) < 8) json(['error' => 'Mật khẩu phải có tối thiểu 8 ký tự'], 400);
+        if (strlen($mat_khau) < 8) {
+            json(['error' => 'Mật khẩu phải có tối thiểu 8 ký tự'], 400);
+        }
         
-        if ($ngay_sinh === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $ngay_sinh)) json(['error' => 'Ngày sinh không hợp lệ'], 400);
+        if ($ngay_sinh === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $ngay_sinh)) {
+            json(['error' => 'Ngày sinh không hợp lệ'], 400);
+        }
 
-        if (User::timTheoEmail($email)) json(['error' => 'Email đã tồn tại'], 409);
+        if (User::timTheoEmail($email)) {
+            json(['error' => 'Email đã tồn tại'], 409);
+        }
 
-        $id = User::taoMoi([
-            'email' => $email,
-            'mat_khau_bam' => password_hash($mat_khau, PASSWORD_BCRYPT),
-            'ho_ten' => $ho_ten !== '' ? $ho_ten : null,
-            'so_dien_thoai' => $so_dien_thoai !== '' ? $so_dien_thoai : null,
-            'ngay_sinh' => $ngay_sinh,
-            'vai_tro' => 'NGUOI_DUNG',
-            'trang_thai' => 'HOAT_DONG',
-        ]);
+        try {
+            // Gọi hàm taoMoi đã có validation
+            $id = User::taoMoi([
+                'email' => $email,
+                'mat_khau_bam' => password_hash($mat_khau, PASSWORD_BCRYPT),
+                'ho_ten' => $ho_ten !== '' ? $ho_ten : null,
+                'so_dien_thoai' => $so_dien_thoai !== '' ? $so_dien_thoai : null,
+                'ngay_sinh' => $ngay_sinh,
+                'vai_tro' => 'NGUOI_DUNG',
+                'trang_thai' => 'HOAT_DONG', // SỬA: 'trang_thai' không phải 'trang_thoai'
+            ]);
 
-        $_SESSION['nguoi_dung_id'] = $id;
-        json(['ok' => true, 'message' => 'Đăng ký thành công', 'nguoi_dung_id' => $id], 201);
+            $_SESSION['nguoi_dung_id'] = $id;
+            json(['ok' => true, 'message' => 'Đăng ký thành công', 'nguoi_dung_id' => $id], 201);
+            
+        } catch (Exception $e) {
+            // Xử lý lỗi validation từ model
+            $errorData = json_decode($e->getMessage(), true);
+            if ($errorData && isset($errorData['errors'])) {
+                // Lấy lỗi đầu tiên để hiển thị
+                $firstError = reset($errorData['errors']);
+                json(['error' => $firstError], 400);
+            } else {
+                json(['error' => 'Đăng ký thất bại'], 400);
+            }
+        }
     }
 
     public function dangNhap(): void {

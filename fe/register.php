@@ -52,38 +52,38 @@
                             <div class="row g-3 mb-3">
                                 <div class="col-md-6">
                                     <label class="form-label fw-bold small text-uppercase">Họ <span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control py-3 required" placeholder="Nguyễn">
+                                    <input type="text" class="form-control py-3 required" name="ho" placeholder="Nguyễn">
                                     <div class="invalid-feedback">Vui lòng nhập họ</div>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label fw-bold small text-uppercase">Tên <span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control py-3 required" placeholder="Văn A">
+                                    <input type="text" class="form-control py-3 required" name="ten" placeholder="Văn A">
                                     <div class="invalid-feedback">Vui lòng nhập tên</div>
                                 </div>
                             </div>
 
                             <div class="mb-3">
                                 <label class="form-label fw-bold small text-uppercase">Ngày sinh <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control py-3 required" placeholder="DD/MM/YYYY" 
+                                <input type="text" class="form-control py-3 required" name="ngay_sinh" placeholder="DD/MM/YYYY" 
                                        onfocus="(this.type='date')" onblur="if(!this.value) this.type='text'">
                                 <div class="invalid-feedback">Vui lòng chọn ngày sinh</div>
                             </div>
 
                             <div class="mb-3">
                                 <label class="form-label fw-bold small text-uppercase">Số điện thoại <span class="text-danger">*</span></label>
-                                <input type="tel" class="form-control py-3 required phone-check" placeholder="0912xxxxxx">
+                                <input type="tel" class="form-control py-3 required phone-check" name="so_dien_thoai" placeholder="0912xxxxxx">
                                 <div class="invalid-feedback">SĐT không hợp lệ (phải có 10 số)</div>
                             </div>
 
                             <div class="mb-3">
                                 <label class="form-label fw-bold small text-uppercase">Email <span class="text-danger">*</span></label>
-                                <input type="email" class="form-control py-3 required email-check" placeholder="name@example.com">
+                                <input type="email" class="form-control py-3 required email-check" name="email" placeholder="name@example.com">
                                 <div class="invalid-feedback">Email không đúng định dạng</div>
                             </div>
 
                             <div class="mb-4">
                                 <label class="form-label fw-bold small text-uppercase">Mật khẩu <span class="text-danger">*</span></label>
-                                <input type="password" class="form-control py-3 required" placeholder="Nhập mật khẩu">
+                                <input type="password" class="form-control py-3 required" name="mat_khau" placeholder="Nhập mật khẩu">
                                 <div class="invalid-feedback">Vui lòng nhập mật khẩu</div>
                             </div>
 
@@ -113,9 +113,11 @@
     }
 
     function isValidPhone(phone) {
-        // Chấp nhận số bắt đầu bằng 0 hoặc +84, theo sau là 9 chữ số
-        return /^(0|\+84)[0-9]{9}$/.test(phone);
+        // Bắt đầu bằng 0, theo sau là 9 hoặc 10 chữ số (tổng 10-11 số)
+        return /^0\d{9,10}$/.test(phone);
     }
+
+    function isValidVietnameseName(name) { return /^[A-Za-zÀ-ỹà-ỹ\s\-\\.]+$/u.test(name); }
 
     // === HÀM KIỂM TRA TỪNG Ô INPUT ===
     function checkInput(input) {
@@ -139,6 +141,11 @@
         else if (input.classList.contains('phone-check') && !isValidPhone(value)) {
             isValid = false;
             errorMsgElement.textContent = "Số điện thoại không hợp lệ (10 số)";
+        }
+        // 4. Kiểm tra Họ và Tên
+        else if ((input.name === 'ho' || input.name === 'ten') && !isValidVietnameseName(value)) {
+            isValid = false;
+            errorMsgElement.textContent = "Họ/tên không được chứa số hoặc ký tự đặc biệt.";
         }
 
         // Cập nhật giao diện (Thêm/Xóa class Bootstrap)

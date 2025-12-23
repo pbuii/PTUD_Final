@@ -21,6 +21,153 @@ final class Order
         return $row ? (int)$row['id'] : 0;
     }
 
+    public static function taoTrucTiep(int $nguoi_dung_id, int $sku_id, int $so_luong, array $info): array
+    {
+        $pdo = Database::pdo();
+
+        try {
+            $pdo->beginTransaction();
+
+            // 1. Lấy thông tin SKU với size và màu
+            $stmt = $pdo->prepare("
+                SELECT 
+                    sp.id as san_pham_id, 
+                    sp.ten_san_pham, 
+                    sp.trang_thai as sp_trang_thai,
+                    sk.gia_ban, 
+                    sk.so_luong_ton, 
+                    sk.ma_sku,
+                    sk.trang_thai as sku_trang_thai,
+                    ks.ten_kich_co,
+                    ms.ten_mau,
+                    COALESCE(sk.anh_url, sp.anh_dai_dien_url) as anh_url
+                FROM sku_san_pham sk
+                JOIN san_pham sp ON sk.san_pham_id = sp.id
+                LEFT JOIN kich_co ks ON sk.kich_co_id = ks.id
+                LEFT JOIN mau_sac ms ON sk.mau_sac_id = ms.id
+                WHERE sk.id = ? 
+                AND sk.trang_thai = 'DANG_BAN'
+                AND sp.trang_thai = 'DANG_BAN'
+            ");
+            $stmt->execute([$sku_id]);
+            $sku = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$sku) {
+                throw new Exception('Sản phẩm không tồn tại hoặc đã ngừng bán');
+            }
+
+            if ($sku['so_luong_ton'] < $so_luong) {
+                throw new Exception('Số lượng trong kho không đủ. Chỉ còn ' . $sku['so_luong_ton'] . ' sản phẩm');
+            }
+
+            // 2. Tạo mã đơn hàng
+            $ma_don = 'DH' . date('Ymd') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
+            
+            // 3. Tính toán tổng tiền
+            $tam_tinh = $sku['gia_ban'] * $so_luong;
+            $phi_ship = (float)($info['phi_van_chuyen'] ?? 30000);
+            $giam_gia = (float)($info['giam_gia'] ?? 0);
+            $tong_tien = $tam_tinh + $phi_ship - $giam_gia;
+
+            // Lấy mã khuyến mãi từ info
+            $ma_km = isset($info['ma_khuyen_mai']) ? (string)$info['ma_khuyen_mai'] : null;
+            if ($ma_km === '') $ma_km = null;
+
+            // 4. Tạo đơn hàng
+            $stmt = $pdo->prepare("
+                INSERT INTO don_hang (
+                    ma_don_hang, nguoi_dung_id, ma_khuyen_mai, trang_thai, phuong_thuc_thanh_toan,
+                    trang_thai_thanh_toan, tam_tinh, phi_van_chuyen, giam_gia,
+                    tong_tien, nguoi_nhan, sdt_nguoi_nhan, dia_chi_giao_hang, ghi_chu, tao_luc
+                ) VALUES (?, ?, ?, 'CHO_XU_LY', ?, 'CHUA_THANH_TOAN', ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ");
+            $stmt->execute([
+                $ma_don, 
+                $nguoi_dung_id, 
+                $ma_km,
+                $info['phuong_thuc_thanh_toan'] ?? 'COD',
+                $tam_tinh, 
+                $phi_ship, 
+                $giam_gia,
+                $tong_tien, 
+                $info['nguoi_nhan'], 
+                $info['sdt_nguoi_nhan'],
+                $info['dia_chi_giao_hang'], 
+                $info['ghi_chu'] ?? null
+            ]);
+            
+            $don_hang_id = (int)$pdo->lastInsertId();
+
+            // 5. Thêm chi tiết đơn hàng với đầy đủ thông tin SKU
+            $ten_san_pham = $sku['ten_san_pham'];
+            if ($sku['ten_kich_co'] || $sku['ten_mau']) {
+                $ten_san_pham .= ' (';
+                if ($sku['ten_kich_co']) $ten_san_pham .= 'Size: ' . $sku['ten_kich_co'];
+                if ($sku['ten_kich_co'] && $sku['ten_mau']) $ten_san_pham .= ' | ';
+                if ($sku['ten_mau']) $ten_san_pham .= 'Màu: ' . $sku['ten_mau'];
+                $ten_san_pham .= ')';
+            }
+            if ($sku['ma_sku']) {
+                $ten_san_pham .= ' [' . $sku['ma_sku'] . ']';
+            }
+            
+            $stmt = $pdo->prepare("
+                INSERT INTO chi_tiet_don_hang (
+                    don_hang_id, san_pham_id, sku_id, ten_san_pham, don_gia, so_luong, thanh_tien, tao_luc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+            ");
+            $stmt->execute([
+                $don_hang_id, 
+                $sku['san_pham_id'], 
+                $sku_id,
+                $ten_san_pham,
+                $sku['gia_ban'], 
+                $so_luong, 
+                $sku['gia_ban'] * $so_luong
+            ]);
+
+            // 6. Cập nhật tồn kho SKU
+            $stmt = $pdo->prepare("
+                UPDATE sku_san_pham 
+                SET so_luong_ton = so_luong_ton - ?, cap_nhat_luc = NOW() 
+                WHERE id = ? AND so_luong_ton >= ?
+            ");
+            $stmt->execute([$so_luong, $sku_id, $so_luong]);
+
+            if ($stmt->rowCount() <= 0) {
+                throw new Exception('Lỗi cập nhật tồn kho SKU');
+            }
+
+            // 7. Cập nhật tổng tồn kho sản phẩm
+            $stmt = $pdo->prepare("
+                UPDATE san_pham 
+                SET so_luong_ton = (SELECT SUM(so_luong_ton) FROM sku_san_pham WHERE san_pham_id = ?), 
+                    cap_nhat_luc = NOW() 
+                WHERE id = ?
+            ");
+            $stmt->execute([$sku['san_pham_id'], $sku['san_pham_id']]);
+
+            $pdo->commit();
+
+            return [
+                'ok' => true,
+                'ma_don_hang' => $ma_don,
+                'don_hang_id' => $don_hang_id,
+                'tam_tinh' => $tam_tinh,
+                'phi_van_chuyen' => $phi_ship,
+                'giam_gia' => $giam_gia,
+                'tong_tien' => $tong_tien,
+                'message' => 'Đặt hàng thành công'
+            ];
+
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            return ['ok' => false, 'error' => $e->getMessage(), 'code' => 400];
+        }
+    }
+
     public static function taoTuGioHang(int $uid, array $payload): array
     {
         $pdo = Database::pdo();

@@ -158,8 +158,7 @@ include 'header.php';
                 <button id="btnAddToCart" class="btn btn-outline-dark"
                 onclick="if(!validateBeforeBuy()) return; handleAddToCart();">THÊM VÀO GIỎ</button>
 
-                <button id="btnBuyNow" class="btn btn-dark flex-grow-1 fw-bold py-2"
-                    onclick="if(!validateBeforeBuy()) return;">MUA NGAY</button>
+                <button id="btnBuyNow" class="btn btn-dark flex-grow-1 fw-bold py-2">MUA NGAY</button>
             </div>
         </div>
     </div>
@@ -464,7 +463,19 @@ function applySkuImageByColor(){
     function renderSizes(){
         const wrap = document.getElementById('pdSizes');
         if(!wrap) return;
+        
+        // Ẩn tiêu đề nếu không có size
+        const label = wrap.previousElementSibling; // Thẻ label "Chọn size:"
         const sizes = Array.isArray(sp?.sizes) ? sp.sizes : [];
+        
+        if(sizes.length === 0) {
+            if(label) label.style.display = 'none';
+            wrap.innerHTML = '<span class="text-muted small">Freesize / Một kích cỡ</span>';
+            return;
+        }
+        
+        if(label) label.style.display = 'block';
+
         wrap.innerHTML = sizes.map(s=>{
             const id = Number(s.id);
             const active = (selectedSizeId === id) ? ' active' : '';
@@ -475,7 +486,12 @@ function applySkuImageByColor(){
             btn.addEventListener('click', ()=>{
                 const id = Number(btn.getAttribute('data-size-id'));
                 if(btn.disabled) return;
-                selectedSizeId = (selectedSizeId === id) ? null : id;
+                // Nếu chỉ có 1 size thì không cho bỏ chọn (UX tốt hơn)
+                if(sizes.length > 1) {
+                    selectedSizeId = (selectedSizeId === id) ? null : id;
+                } else {
+                    selectedSizeId = id; 
+                }
                 syncOptionStates();
                 syncPriceAndStock();
             });
@@ -485,7 +501,19 @@ function applySkuImageByColor(){
     function renderColors(){
         const wrap = document.getElementById('pdColors');
         if(!wrap) return;
+
+        // Ẩn tiêu đề nếu không có màu
+        const label = wrap.previousElementSibling; // Thẻ label "Chọn màu:"
         const colors = Array.isArray(sp?.colors) ? sp.colors : [];
+
+        if(colors.length === 0) {
+            if(label) label.style.display = 'none';
+            wrap.innerHTML = ''; // Không render gì cả
+            return;
+        }
+
+        if(label) label.style.display = 'block';
+
         wrap.innerHTML = colors.map(c=>{
             const id = Number(c.id);
             const hex = c.ma || '#ffffff';
@@ -498,7 +526,14 @@ function applySkuImageByColor(){
             div.addEventListener('click', ()=>{
                 if(div.classList.contains('disabled')) return;
                 const id = Number(div.getAttribute('data-color-id'));
-                selectedColorId = (selectedColorId === id) ? null : id;
+                
+                // Nếu chỉ có 1 màu thì không cho bỏ chọn
+                if(colors.length > 1) {
+                    selectedColorId = (selectedColorId === id) ? null : id;
+                } else {
+                    selectedColorId = id;
+                }
+
                 syncOptionStates();
                 syncPriceAndStock();
                 applySkuImageByColor();
@@ -558,6 +593,7 @@ function applySkuImageByColor(){
         });
     }
 
+    // Thay thế hàm syncPriceAndStock cũ
     function syncPriceAndStock(){
         const priceEl = document.getElementById('pdPrice');
         const stockEl = document.getElementById('pdStock');
@@ -567,24 +603,35 @@ function applySkuImageByColor(){
 
         if(!priceEl || !stockEl || !sp) return;
 
-        if(selectedSizeId === null || selectedColorId === null){
+        const hasSizes = Array.isArray(sp?.sizes) && sp.sizes.length > 0;
+        const hasColors = Array.isArray(sp?.colors) && sp.colors.length > 0;
+
+        // Kiểm tra xem đã chọn đủ các thuộc tính CÓ SẴN chưa
+        const missingSize = hasSizes && selectedSizeId === null;
+        const missingColor = hasColors && selectedColorId === null;
+
+        if(missingSize || missingColor){
+            // Nếu chưa chọn đủ -> Hiển thị giá range hoặc giá gốc
             priceEl.textContent = formatVND(sp.gia_ban);
-            stockEl.textContent = 'Vui lòng chọn size và màu';
+            stockEl.textContent = 'Vui lòng chọn phân loại hàng';
             stockEl.className = 'small text-muted';
-            if(addBtn) addBtn.disabled = false;
+            if(addBtn) addBtn.disabled = false; // Vẫn để enable để user bấm vào trigger validate alert
             if(buyBtn) buyBtn.disabled = false;
             return;
         }
 
+        // Tìm variant
         const v = getVariant(selectedSizeId, selectedColorId);
+        
         if(!v){
-            stockEl.textContent = 'Không có biến thể phù hợp';
+            stockEl.textContent = 'Biến thể không tồn tại';
             stockEl.className = 'small text-danger fw-bold';
             if(addBtn) addBtn.disabled = true;
             if(buyBtn) buyBtn.disabled = true;
             return;
         }
 
+        // Update giá và kho
         priceEl.textContent = formatVND(v.gia_ban);
         const ton = Number(v.so_luong_ton || 0);
         const sku = v.ma_sku ? `SKU: ${v.ma_sku} • ` : '';
@@ -594,7 +641,7 @@ function applySkuImageByColor(){
             stockEl.className = 'small text-danger fw-bold';
         } else {
             stockEl.textContent = `${sku}Còn ${ton} sản phẩm`;
-            stockEl.className = 'small text-muted';
+            stockEl.className = 'small text-success fw-bold';
         }
 
         if (qtyInput) handleQuantityChange(qtyInput);
@@ -613,24 +660,39 @@ function applySkuImageByColor(){
     }
 
     function validateBeforeBuy(){
-        if(selectedSizeId === null || selectedColorId === null){
-            alert('Vui lòng chọn size và màu');
+        // Kiểm tra xem sản phẩm có options không
+        const hasSizes = Array.isArray(sp?.sizes) && sp.sizes.length > 0;
+        const hasColors = Array.isArray(sp?.colors) && sp.colors.length > 0;
+
+        // Nếu sản phẩm có list size mà chưa chọn size -> Báo lỗi
+        if(hasSizes && selectedSizeId === null){
+            alert('Vui lòng chọn size');
             return false;
         }
+
+        // Nếu sản phẩm có list màu mà chưa chọn màu -> Báo lỗi
+        if(hasColors && selectedColorId === null){
+            alert('Vui lòng chọn màu sắc');
+            return false;
+        }
+
+        // Lấy variant tương ứng (với trường hợp không màu, selectedColorId là null vẫn hợp lệ)
         const v = getVariant(selectedSizeId, selectedColorId);
+        
         if(!v){
-            alert('Biến thể không hợp lệ');
+            alert('Phiên bản này hiện không khả dụng. Vui lòng chọn kết hợp khác.');
             return false;
         }
+
         const ton = Number(v.so_luong_ton || 0);
         const qty = Number(document.getElementById('quantity')?.value || 1);
 
         if(ton <= 0){
-            alert('Biến thể đã hết hàng');
+            alert('Sản phẩm này đã hết hàng');
             return false;
         }
         if(qty > ton){
-            alert(`Chỉ còn ${ton} sản phẩm, vui lòng giảm số lượng.`);
+            alert(`Kho chỉ còn ${ton} sản phẩm, vui lòng giảm số lượng.`);
             return false;
         }
         if(qty > MAX_BUY_PER_SKU){
@@ -659,6 +721,76 @@ function applySkuImageByColor(){
         }
         alert('Đã thêm vào giỏ!');
     }
+
+    // Thêm hàm xử lý MUA NGAY
+    async function handleBuyNow() {
+        if (!validateBeforeBuy()) return;
+        
+        const v = getVariant(selectedSizeId, selectedColorId);
+        if (!v) {
+            alert('Biến thể không hợp lệ');
+            return;
+        }
+        
+        const skuId = Number(v.id);
+        const qty = Number(document.getElementById('quantity')?.value || 1);
+        const productName = sp.ten_san_pham || 'Sản phẩm';
+        const price = v.gia_ban || sp.gia_ban;
+        
+        // Lấy thông tin size và màu đã chọn từ variants
+        const selectedSize = sp.sizes?.find(s => Number(s.id) === selectedSizeId);
+        const selectedColor = sp.colors?.find(c => Number(c.id) === selectedColorId);
+        
+        // Hiển thị loading
+        const btn = document.getElementById('btnBuyNow');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang xử lý...';
+        btn.disabled = true;
+        
+        try {
+            // Kiểm tra đăng nhập
+            const resCheck = await fetch(`${API_BASE}/api/auth/me`, { 
+                credentials: 'include' 
+            });
+            
+            if (resCheck.status === 401) {
+                alert('Bạn cần đăng nhập để mua hàng.');
+                window.location.href = 'login.php?redirect=' + encodeURIComponent(window.location.href);
+                return;
+            }
+            
+            // Tạo URL checkout với đầy đủ thông tin SKU
+            const params = new URLSearchParams({
+                buy_now: '1',
+                sku_id: skuId,
+                quantity: qty,
+                product_id: sp.id,
+                product_name: encodeURIComponent(productName),
+                price: price,
+                sku_code: v.ma_sku || '',
+                size_name: selectedSize ? encodeURIComponent(selectedSize.ten) : '',
+                color_name: selectedColor ? encodeURIComponent(selectedColor.ten) : ''
+            });
+            
+            // Chuyển hướng đến trang checkout
+            window.location.href = `checkout.php?${params.toString()}`;
+            
+        } catch (error) {
+            console.error('Lỗi khi xử lý mua ngay:', error);
+            alert('Có lỗi xảy ra. Vui lòng thử lại.');
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    // Thêm event listener cho nút MUA NGAY
+    document.addEventListener('DOMContentLoaded', function() {
+        const btnBuyNow = document.getElementById('btnBuyNow');
+        if (btnBuyNow) {
+            btnBuyNow.addEventListener('click', handleBuyNow);
+        }
+    });
 
     async function loadDetail(){
         const id = Number(qs('id') || 0);

@@ -93,13 +93,24 @@ $user = $data['nguoi_dung'];
     const inputs = form.querySelectorAll('.required');
     const button = form.querySelector('.update-button');
 
-    function isValidPhone(phone) { return /^(0|\+84)[0-9]{9}$/.test(phone); }
+    function isValidPhone(phone) { return /^0\d{9,10}$/.test(phone); }
+    function isValidVietnameseName(name) { return /^[A-Za-zÀ-ỹà-ỹ\s\-\\.]+$/u.test(name); }
 
     function checkInput(input) {
         const value = input.value.trim();
         let isValid = true;
-        if (value === '') isValid = false;
-        else if (input.classList.contains('phone-check') && !isValidPhone(value)) isValid = false;
+        let errorMsgElement = input.nextElementSibling;
+
+        if (value === '') {
+            isValid = false;
+            errorMsgElement.textContent = "Trường này không được để trống.";
+        } else if (input.classList.contains('phone-check') && !isValidPhone(value)) {
+            isValid = false;
+            errorMsgElement.textContent = "SĐT phải bắt đầu bằng 0 và có 10-11 chữ số.";
+        } else if ((input.name === 'ho' || input.name === 'ten') && !isValidVietnameseName(value)) {
+            isValid = false;
+            errorMsgElement.textContent = "Họ/tên không được chứa số hoặc ký tự đặc biệt.";
+        }
 
         if (!isValid) {
             input.classList.add('is-invalid');
@@ -113,7 +124,12 @@ $user = $data['nguoi_dung'];
 
     inputs.forEach(input => {
         input.addEventListener('blur', () => checkInput(input));
-        input.addEventListener('input', () => { if (input.classList.contains('is-invalid')) input.classList.remove('is-invalid'); });
+        input.addEventListener('input', () => { 
+            if (input.classList.contains('is-invalid')) {
+                input.classList.remove('is-invalid');
+                input.nextElementSibling.textContent = "Vui lòng nhập thông tin.";
+            }
+        });
     });
 
     form.addEventListener('submit', async function(e) {
@@ -138,7 +154,6 @@ $user = $data['nguoi_dung'];
         button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Đang lưu...';
 
         try {
-            // === SỬA QUAN TRỌNG: Đổi method thành POST để khớp routes.php ===
             const response = await fetch('<?php echo $API_BASE; ?>/api/nguoi-dung/cap-nhat', {
                 method: 'POST', 
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -154,10 +169,27 @@ $user = $data['nguoi_dung'];
                 alert('Cập nhật thành công!');
                 location.reload();
             } else {
-                alert('Lỗi: ' + (result.message || 'Không thể cập nhật'));
+                // Xử lý lỗi validation
+                if (result.errors) {
+                    const errorMessages = Object.values(result.errors).join('\n');
+                    alert("Vui lòng sửa các lỗi sau:\n" + errorMessages);
+                } else {
+                    alert('Lỗi: ' + (result.message || 'Không thể cập nhật'));
+                }
             }
         } catch (error) {
             console.error(error);
+            // Xử lý lỗi ném ra từ model (validation fail)
+            if (error.message.includes('{')) {
+                try {
+                    const errResult = JSON.parse(error.message);
+                    if (errResult.errors) {
+                        const errorMessages = Object.values(errResult.errors).join('\n');
+                        alert("Dữ liệu không hợp lệ:\n" + errorMessages);
+                        return;
+                    }
+                } catch {}
+            }
             alert('Có lỗi xảy ra: ' + error.message);
         } finally {
             button.disabled = false;

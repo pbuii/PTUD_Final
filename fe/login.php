@@ -153,7 +153,7 @@
   }
 
   function checkInput(input){
-    const v = input.value.trim();
+    const v = input.value;
 
     if(v === ''){
       if(input === emailInput) showError(input, 'Vui lòng nhập email');
@@ -162,7 +162,7 @@
     }
 
     // validate thêm cho email (đồng bộ chuẩn BE)
-    if(input === emailInput && !isValidEmail(v)){
+    if(input === emailInput && !isValidEmail(v.trim())){ // Email vẫn cần trim
       showError(input, 'Email không hợp lệ');
       return false;
     }
@@ -174,13 +174,22 @@
   function checkForm(){
     let valid = true;
 
-    // required
-    inputs.forEach(i=>{
-      if(i.value.trim() === '') valid = false;
-    });
+    // Kiểm tra email (có trim) và mật khẩu (không trim)
+    const emailValue = emailInput.value.trim();
+    const passValue = passInput.value; // Không trim ở đây
+
+    // Email không được trống sau khi trim
+    if(emailValue === ''){
+      valid = false;
+    }
+    
+    // Mật khẩu không được trống
+    if(passValue === ''){
+      valid = false;
+    }
 
     // email format
-    if(valid && !isValidEmail(emailInput.value.trim())) valid = false;
+    if(valid && !isValidEmail(emailValue)) valid = false;
 
     button.disabled = !valid;
     if(valid){
@@ -200,19 +209,34 @@
     });
 
     input.addEventListener('input', () => {
-      // đang gõ thì bỏ lỗi cho đỡ khó chịu
+      // Chỉ bỏ lỗi cho password khi đang gõ, nhưng không trim
       if(input.classList.contains('is-invalid')) clearError(input);
       checkForm();
     });
   });
 
   async function login(){
-    const email = emailInput.value.trim();
-    const mat_khau = passInput.value;
+    const email = emailInput.value.trim(); // Email vẫn cần trim
+    const mat_khau = passInput.value; // Mật khẩu KHÔNG trim
 
     // validate lần cuối
     let ok = true;
-    inputs.forEach(i => { if(!checkInput(i)) ok = false; });
+    
+    // Kiểm tra email riêng
+    if(email === ''){
+      showError(emailInput, 'Vui lòng nhập email');
+      ok = false;
+    } else if(!isValidEmail(email)){
+      showError(emailInput, 'Email không hợp lệ');
+      ok = false;
+    }
+    
+    // Kiểm tra mật khẩu (không trim)
+    if(mat_khau === ''){
+      showError(passInput, 'Vui lòng nhập mật khẩu');
+      ok = false;
+    }
+    
     checkForm();
     if(!ok || button.disabled) return;
 
@@ -223,29 +247,25 @@
       const res = await fetch(`${API_BASE}/api/auth/dang-nhap`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        credentials: 'include', // ✅ để session cookie hoạt động
+        credentials: 'include',
         body: JSON.stringify({ email, mat_khau })
       });
 
       const data = await res.json().catch(()=> ({}));
 
       if(!res.ok){
-        // BE thường trả {error: "..."} với 400/401/403
         const msg = data.error || 'Đăng nhập thất bại';
 
-        // Lỗi sai email/mật khẩu -> hiển thị chung dưới mật khẩu cho dễ hiểu
         if(res.status === 401){
-          showError(passInput, msg); // "Email hoặc mật khẩu không đúng"
+          showError(passInput, msg);
         }else if(res.status === 403){
-          showError(emailInput, msg); // "Tài khoản đang bị khóa..."
+          showError(emailInput, msg);
         }else{
           alert(msg);
         }
         return;
       }
 
-      // ✅ Login OK
-      // Bạn có thể redirect về trang trước đó nếu muốn (next=...)
       window.location.href = 'index.php';
     }catch(err){
       alert('Không kết nối được server. Kiểm tra XAMPP và URL API.');

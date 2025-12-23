@@ -70,9 +70,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     elseif ($action === 'update_payment_status') {
         $new_payment_status = $_POST['payment_status'];
         try {
-            $stmt = $pdo->prepare("UPDATE don_hang SET trang_thai_thanh_toan = ? WHERE id = ?");
-            $stmt->execute([$new_payment_status, $order_id]);
-            showMessage('Cập nhật trạng thái thanh toán thành công!');
+            // --- LOGIC MỚI: Kiểm tra xem đơn có bị hủy không trước khi update thanh toán ---
+            $stmtCheck = $pdo->prepare("SELECT trang_thai FROM don_hang WHERE id = ?");
+            $stmtCheck->execute([$order_id]);
+            $current_status = $stmtCheck->fetchColumn();
+
+            if ($current_status === 'HUY') {
+                showMessage('Không thể cập nhật thanh toán cho đơn hàng đã HỦY!', 'danger');
+            } else {
+                $stmt = $pdo->prepare("UPDATE don_hang SET trang_thai_thanh_toan = ? WHERE id = ?");
+                $stmt->execute([$new_payment_status, $order_id]);
+                showMessage('Cập nhật trạng thái thanh toán thành công!');
+            }
+            // -----------------------------------------------------------------------------
         } catch (PDOException $e) {
             showMessage('Lỗi: ' . $e->getMessage(), 'danger');
         }
@@ -83,9 +93,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
 // Lấy thông tin đơn hàng
 $stmt = $pdo->prepare("SELECT dh.*, nd.ho_ten, nd.email, nd.so_dien_thoai 
-                       FROM don_hang dh 
-                       LEFT JOIN nguoi_dung nd ON dh.nguoi_dung_id = nd.id 
-                       WHERE dh.id = ?");
+                        FROM don_hang dh 
+                        LEFT JOIN nguoi_dung nd ON dh.nguoi_dung_id = nd.id 
+                        WHERE dh.id = ?");
 $stmt->execute([$order_id]);
 $order = $stmt->fetch();
 
@@ -100,10 +110,10 @@ $order_items = $stmt->fetchAll();
 
 // Lấy lịch sử trạng thái
 $stmt = $pdo->prepare("SELECT ls.*, nd.ho_ten as nguoi_thay_doi 
-                       FROM lich_su_trang_thai_don_hang ls 
-                       LEFT JOIN nguoi_dung nd ON ls.nguoi_thay_doi_id = nd.id 
-                       WHERE ls.don_hang_id = ? 
-                       ORDER BY ls.tao_luc DESC");
+                        FROM lich_su_trang_thai_don_hang ls 
+                        LEFT JOIN nguoi_dung nd ON ls.nguoi_thay_doi_id = nd.id 
+                        WHERE ls.don_hang_id = ? 
+                        ORDER BY ls.tao_luc DESC");
 $stmt->execute([$order_id]);
 $history = $stmt->fetchAll();
 
@@ -318,55 +328,68 @@ include 'includes/header.php';
                         <hr class="my-3">
 
                         <div class="d-grid gap-2 mb-3">
-                            <?php if ($order['trang_thai_thanh_toan'] !== 'DA_THANH_TOAN'): ?>
-                            <form method="POST" action="">
-                                <input type="hidden" name="action" value="update_payment_status">
-                                <input type="hidden" name="payment_status" value="DA_THANH_TOAN">
-                                <button type="submit" class="btn btn-sm btn-success w-100">
-                                    <i class="fas fa-check me-1"></i> Xác nhận Đã TT
+                            <?php if ($order['trang_thai'] === 'HUY'): ?>
+                                <button class="btn btn-secondary w-100" disabled>
+                                    <i class="fas fa-ban me-1"></i> Đơn đã hủy
                                 </button>
-                            </form>
-                            <?php endif; ?>
-                            
-                            <?php if ($order['trang_thai_thanh_toan'] !== 'CHUA_THANH_TOAN'): ?>
-                            <form method="POST" action="">
-                                <input type="hidden" name="action" value="update_payment_status">
-                                <input type="hidden" name="payment_status" value="CHUA_THANH_TOAN">
-                                <button type="submit" class="btn btn-sm btn-outline-warning w-100">
-                                    <i class="fas fa-undo me-1"></i> Đánh dấu Chưa TT
-                                </button>
-                            </form>
+                            <?php else: ?>
+                                <?php if ($order['trang_thai_thanh_toan'] !== 'DA_THANH_TOAN'): ?>
+                                <form method="POST" action="">
+                                    <input type="hidden" name="action" value="update_payment_status">
+                                    <input type="hidden" name="payment_status" value="DA_THANH_TOAN">
+                                    <button type="submit" class="btn btn-sm btn-success w-100">
+                                        <i class="fas fa-check me-1"></i> Xác nhận đã thanh toán
+                                    </button>
+                                </form>
+                                <?php endif; ?>
+                                
+                                <?php if ($order['trang_thai_thanh_toan'] !== 'CHUA_THANH_TOAN'): ?>
+                                <form method="POST" action="">
+                                    <input type="hidden" name="action" value="update_payment_status">
+                                    <input type="hidden" name="payment_status" value="CHUA_THANH_TOAN">
+                                    <button type="submit" class="btn btn-sm btn-outline-warning w-100">
+                                        <i class="fas fa-undo me-1"></i> Đánh dấu chưa thanh toán
+                                    </button>
+                                </form>
+                                <?php endif; ?>
                             <?php endif; ?>
                         </div>
-
                         <hr class="my-3">
                         
                         <div class="mb-2 fw-bold small">Cập nhật trạng thái đơn:</div>
-                        <div class="dropdown">
-                            <button class="btn btn-outline-secondary dropdown-toggle w-100" type="button" data-bs-toggle="dropdown">
-                                Chọn trạng thái
+                        <?php if ($order['trang_thai'] === 'HUY'): ?>
+                            <!-- KHI ĐƠN ĐÃ HỦY: Hiển thị nút bị disabled -->
+                            <button class="btn btn-outline-secondary w-100" disabled>
+                                <i class="fas fa-ban me-1"></i> Không thể cập nhật đơn đã huỷ
                             </button>
-                            <ul class="dropdown-menu shadow border-0 w-100">
-                                <?php 
-                                $statuses = [
-                                    'CHO_XU_LY' => ['label' => 'Chờ xử lý', 'class' => ''],
-                                    'DANG_XU_LY' => ['label' => 'Đang xử lý', 'class' => ''],
-                                    'HOAN_TAT' => ['label' => 'Hoàn tất', 'class' => 'text-success'],
-                                    'HUY' => ['label' => 'Hủy đơn (Hoàn kho)', 'class' => 'text-danger', 'confirm' => true]
-                                ];
-                                foreach($statuses as $key => $val):
-                                    if($order['trang_thai'] !== $key && $key !== 'YEU_CAU_HUY'): 
-                                ?>
-                                <li>
-                                    <form method="POST" action="" <?php echo isset($val['confirm']) ? "onsubmit=\"return confirm('Xác nhận đổi trạng thái? Nếu chọn HỦY, kho sẽ được hoàn lại.')\"" : ""; ?>>
-                                        <input type="hidden" name="action" value="update_status">
-                                        <input type="hidden" name="new_status" value="<?php echo $key; ?>">
-                                        <button type="submit" class="dropdown-item <?php echo $val['class']; ?>"><?php echo $val['label']; ?></button>
-                                    </form>
-                                </li>
-                                <?php endif; endforeach; ?>
-                            </ul>
-                        </div>
+                        <?php else: ?>
+                            <!-- KHI ĐƠN CHƯA HỦY: Hiển thị dropdown như bình thường -->
+                            <div class="dropdown">
+                                <button class="btn btn-outline-secondary dropdown-toggle w-100" type="button" data-bs-toggle="dropdown">
+                                    Chọn trạng thái
+                                </button>
+                                <ul class="dropdown-menu shadow border-0 w-100">
+                                    <?php 
+                                    $statuses = [
+                                        'CHO_XU_LY' => ['label' => 'Chờ xử lý', 'class' => ''],
+                                        'DANG_XU_LY' => ['label' => 'Đang xử lý', 'class' => ''],
+                                        'HOAN_TAT' => ['label' => 'Hoàn tất', 'class' => 'text-success'],
+                                        'HUY' => ['label' => 'Hủy đơn (Hoàn kho)', 'class' => 'text-danger', 'confirm' => true]
+                                    ];
+                                    foreach($statuses as $key => $val):
+                                        if($order['trang_thai'] !== $key && $key !== 'YEU_CAU_HUY'): 
+                                    ?>
+                                    <li>
+                                        <form method="POST" action="" <?php echo isset($val['confirm']) ? "onsubmit=\"return confirm('Xác nhận đổi trạng thái? Nếu chọn HỦY, kho sẽ được hoàn lại.')\"" : ""; ?>>
+                                            <input type="hidden" name="action" value="update_status">
+                                            <input type="hidden" name="new_status" value="<?php echo $key; ?>">
+                                            <button type="submit" class="dropdown-item <?php echo $val['class']; ?>"><?php echo $val['label']; ?></button>
+                                        </form>
+                                    </li>
+                                    <?php endif; endforeach; ?>
+                                </ul>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
 
