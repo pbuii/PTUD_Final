@@ -291,7 +291,6 @@ include 'header.php';
 </div>
 
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script>
     const API_BASE = 'http://localhost/PTUD_Final/public';
     const DEFAULT_SHIPPING = <?php echo (int)$shipping_fee; ?>;
@@ -301,79 +300,70 @@ include 'header.php';
     let shippingFee = DEFAULT_SHIPPING;
     let discountAmount = 0;    
     let discountCodeApplied = '';
-    let previousDiscountAmount = 0;
-    let previousDiscountCode = ''; 
+    
+    // Biến cho chế độ Mua ngay
     let buyNowMode = false;
-    let buyNowSkuId = null;
-    let buyNowQuantity = 1;
-    let buyNowProductId = null;
-    let buyNowProductName = '';
-    let buyNowPrice = 0;
-    let buyNowSkuCode = '';
-    let buyNowSizeName = '';
-    let buyNowColorName = '';
+    let buyNowInfo = {};
 
     function vnd(n) { return Number(n || 0).toLocaleString('vi-VN') + '₫'; }
 
-    // === HÀM VALIDATION ===
+    // === 1. VALIDATION UTILS ===
     function isValidVietnameseName(name) {
-        return /^[A-Za-zÀ-ỹà-ỹ\s\-\\.]+$/u.test(name);
+        // Tên phải có ít nhất 2 ký tự và không chứa ký tự đặc biệt lạ
+        return name.length >= 2 && !/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(name);
     }
 
     function isValidPhone(phone) {
         return /^0\d{9,10}$/.test(phone);
     }
 
-    function checkCheckoutInput(input) {
-        const value = input.value.trim();
-        let isValid = true;
-        let errorMsgElement = input.nextElementSibling;
-
-        if (value === '') {
-            isValid = false;
-            errorMsgElement.textContent = "Trường này không được để trống.";
-        } else if (input.name === 'fullname' && !isValidVietnameseName(value)) {
-            isValid = false;
-            errorMsgElement.textContent = "Họ tên không được chứa số hoặc ký tự đặc biệt.";
-        } else if (input.classList.contains('phone-check') && !isValidPhone(value)) {
-            isValid = false;
-            errorMsgElement.textContent = "Số điện thoại phải bắt đầu bằng 0 và có 10-11 chữ số.";
-        }
-
-        if (!isValid) {
-            input.classList.add('is-invalid');
-            input.classList.remove('is-valid');
-        } else {
-            input.classList.remove('is-invalid');
-            input.classList.add('is-valid');
-        }
-        return isValid;
-    }
-
-    function validateCheckoutForm() {
-        const inputs = document.querySelectorAll('#checkoutForm .required');
+    /**
+     * Hàm kiểm tra form
+     * @param {boolean} isSilent - Nếu true: Chỉ kiểm tra để bật/tắt nút Submit, KHÔNG hiện lỗi đỏ (Dùng khi mới load trang)
+     */
+    function validateCheckoutForm(isSilent = false) {
+        const inputs = document.querySelectorAll('#checkoutForm .form-control.required');
         let allValid = true;
         
+        // 1. Kiểm tra các ô input text
         inputs.forEach(input => {
-            const val = input.value.trim();
+            const val = input.value ? input.value.trim() : '';
+            let isValid = true;
+
             if (val === '') {
-                allValid = false;
+                isValid = false;
             } else if (input.name === 'fullname' && !isValidVietnameseName(val)) {
-                allValid = false;
+                isValid = false;
             } else if (input.classList.contains('phone-check') && !isValidPhone(val)) {
-                allValid = false;
+                isValid = false;
             }
+
+            // Nếu KHÔNG phải kiểm tra ngầm (isSilent = false) thì mới hiện màu đỏ/xanh
+            if (!isSilent) {
+                if (!isValid) {
+                    input.classList.add('is-invalid');
+                    input.classList.remove('is-valid');
+                } else {
+                    input.classList.remove('is-invalid');
+                    input.classList.add('is-valid');
+                }
+            }
+
+            if (!isValid) allValid = false;
         });
         
-        const province = document.getElementById('province').value;
-        const district = document.getElementById('district').value;
-        const ward = document.getElementById('ward').value;
+        // 2. Kiểm tra Select địa chỉ
+        const province = $('#province').val();
+        const district = $('#district').val();
+        const ward = $('#ward').val();
         
         if (!province || !district || !ward) {
             allValid = false;
         }
         
+        // 3. Cập nhật nút Submit
         const btn = document.getElementById('btnPlaceOrder');
+        // Nút chỉ sáng khi: Form Valid VÀ (Có giỏ hàng HOẶC Đang mua ngay)
         if (allValid && (cart?.items?.length > 0 || buyNowMode)) {
             btn.disabled = false;
         } else {
@@ -383,455 +373,252 @@ include 'header.php';
         return allValid;
     }
 
-    // === KHỞI TẠO KHI TRANG LOAD ===
+    // === 2. KHỞI TẠO PAGE ===
     $(document).ready(function() {
-        console.log('🚀 Bắt đầu khởi tạo trang checkout...');
+        console.log('🚀 Ready...');
         
-        // 1. Load danh sách tỉnh/thành
+        // Load Tỉnh/Thành
         $.getJSON('https://provinces.open-api.vn/api/?depth=1', function(data) {
-            console.log('✅ Đã load được', data.length, 'tỉnh/thành');
             $.each(data, function(k, v) {
                 $('#province').append(`<option value="${v.code}" data-name="${v.name}">${v.name}</option>`);
             });
-            
-            // 2. SAU KHI LOAD XONG MỚI GẮN SỰ KIỆN
-            initLocationEvents();
+            initLocationEvents(); 
         }).fail(function() {
-            console.error('❌ Lỗi load API tỉnh/thành');
-            alert('Không thể tải danh sách địa chỉ. Vui lòng thử lại!');
+            console.error('Lỗi API địa chỉ');
         });
 
-        // 3. Gắn sự kiện validation cho input
-        const inputs = document.querySelectorAll('#checkoutForm .required');
-        inputs.forEach(input => {
-            input.addEventListener('blur', () => {
-                checkCheckoutInput(input);
-                validateCheckoutForm();
-            });
-            
-            input.addEventListener('input', () => {
-                if (input.classList.contains('is-invalid')) {
-                    input.classList.remove('is-invalid');
-                }
-                validateCheckoutForm();
-            });
+        // SỰ KIỆN VALIDATION:
+        // - Blur (rời chuột): Kiểm tra và hiện lỗi đỏ nếu sai
+        $('#checkoutForm .form-control.required').on('blur', function() {
+            validateCheckoutForm(false); 
+        });
+        // - Input (đang gõ): Kiểm tra ngầm để mở nút submit, xóa lỗi đỏ nếu user đang sửa
+        $('#checkoutForm .form-control.required').on('input', function() {
+            if ($(this).hasClass('is-invalid')) {
+                $(this).removeClass('is-invalid'); // Xóa đỏ ngay khi gõ lại
+            }
+            validateCheckoutForm(true); // Check ngầm
         });
         
-        // 4. Kiểm tra mode MUA NGAY hoặc load giỏ hàng bình thường
-        if (checkBuyNowMode()) {
-            console.log('🛒 Chế độ: MUA NGAY');
-            $('h2').text('MUA NGAY - Hoàn tất đơn hàng');
-            $('#orderCount').parent().prepend('<span class="badge bg-warning text-dark me-2">MUA NGAY</span>');
+        checkBuyNowMode();
+        if (buyNowMode) {
             loadBuyNowProduct();
         } else {
-            console.log('🛒 Chế độ: Giỏ hàng thông thường');
             loadNormalCart();
         }
     });
 
-    // === HÀM GẮN SỰ KIỆN ĐỊA CHỈ (Chỉ gọi SAU KHI load xong tỉnh/thành) ===
+    // === 3. XỬ LÝ ĐỊA CHỈ (PROVINCE API) ===
     function initLocationEvents() {
-        console.log('📍 Đang gắn sự kiện cho dropdown địa chỉ...');
-        
-        // Sự kiện chọn Tỉnh/Thành
         $('#province').on('change', function() {
             const code = $(this).val();
             const name = $(this).find('option:selected').data('name');
-            console.log('🏙️ Đã chọn tỉnh:', name, '(code:', code + ')');
             
-            // Reset district và ward
+            // Reset
             $('#district').html('<option value="">Chọn Quận/Huyện</option>').prop('disabled', true);
             $('#ward').html('<option value="">Chọn Phường/Xã</option>').prop('disabled', true);
-            $('#district_text, #ward_text').val('');
+            $('#province_text').val(name || ''); // Update text hidden field if needed logic
             
-            if (!code) {
-                $('#province_text').val('');
-                $('#location-badge').removeClass('text-danger text-success')
-                    .html('<i class="fas fa-info-circle me-1"></i> Vui lòng chọn khu vực giao hàng');
-                validateCheckoutForm();
-                return;
+            if (code) {
+                $.getJSON(`https://provinces.open-api.vn/api/p/${code}?depth=2`, function(data) {
+                    if (data.districts) {
+                        $.each(data.districts, function(k, v) {
+                            $('#district').append(`<option value="${v.code}" data-name="${v.name}">${v.name}</option>`);
+                        });
+                        $('#district').prop('disabled', false);
+                    }
+                });
+                $('#location-badge').text(`Đang chọn: ${name}`);
             }
-            
-            $('#province_text').val(name);
-            
-            // Load danh sách quận/huyện
-            $.getJSON(`https://provinces.open-api.vn/api/p/${code}?depth=2`, function(data) {
-                console.log('✅ Đã load', data.districts.length, 'quận/huyện');
-                if (data.districts && data.districts.length > 0) {
-                    $.each(data.districts, function(k, v) {
-                        $('#district').append(`<option value="${v.code}" data-name="${v.name}">${v.name}</option>`);
-                    });
-                    $('#district').prop('disabled', false);
-                    
-                    $('#location-badge').removeClass('text-danger text-success')
-                        .html(`<i class="fas fa-map-marker-alt me-1"></i> ${name} → Chọn Quận/Huyện`);
-                }
-                validateCheckoutForm();
-            }).fail(function() {
-                console.error('❌ Lỗi load quận/huyện');
-            });
+            validateCheckoutForm(true); // Check ngầm khi đổi địa chỉ
         });
 
-        // Sự kiện chọn Quận/Huyện
         $('#district').on('change', function() {
             const code = $(this).val();
-            const name = $(this).find('option:selected').data('name');
-            console.log('🏘️ Đã chọn quận:', name);
-            
             $('#ward').html('<option value="">Chọn Phường/Xã</option>').prop('disabled', true);
-            $('#ward_text').val('');
             
-            if (!code) {
-                $('#district_text').val('');
-                const provinceName = $('#province_text').val();
-                $('#location-badge').removeClass('text-danger text-success')
-                    .html(`<i class="fas fa-map-marker-alt me-1"></i> ${provinceName} → Chọn Quận/Huyện`);
-                validateCheckoutForm();
-                return;
+            if (code) {
+                $.getJSON(`https://provinces.open-api.vn/api/d/${code}?depth=2`, function(data) {
+                    if (data.wards) {
+                        $.each(data.wards, function(k, v) {
+                            $('#ward').append(`<option value="${v.code}" data-name="${v.name}">${v.name}</option>`);
+                        });
+                        $('#ward').prop('disabled', false);
+                    }
+                });
             }
-            
-            $('#district_text').val(name);
-            
-            // Load danh sách phường/xã
-            $.getJSON(`https://provinces.open-api.vn/api/d/${code}?depth=2`, function(data) {
-                console.log('✅ Đã load', data.wards.length, 'phường/xã');
-                if (data.wards && data.wards.length > 0) {
-                    $.each(data.wards, function(k, v) {
-                        $('#ward').append(`<option value="${v.code}" data-name="${v.name}">${v.name}</option>`);
-                    });
-                    $('#ward').prop('disabled', false);
-                    
-                    const provinceName = $('#province_text').val();
-                    $('#location-badge').removeClass('text-danger text-success')
-                        .html(`<i class="fas fa-map-marker-alt me-1"></i> ${provinceName} → ${name} → Chọn Phường/Xã`);
-                }
-                validateCheckoutForm();
-            }).fail(function() {
-                console.error('❌ Lỗi load phường/xã');
-            });
+            validateCheckoutForm(true);
         });
 
-        // Sự kiện chọn Phường/Xã
         $('#ward').on('change', function() {
             const name = $(this).find('option:selected').data('name');
-            console.log('🏡 Đã chọn phường:', name);
-            
-            if (!name) {
-                $('#ward_text').val('');
-            } else {
-                $('#ward_text').val(name);
-                
-                const provinceName = $('#province_text').val();
-                const districtName = $('#district_text').val();
-                $('#location-badge').removeClass('text-danger')
+            if(name) {
+                const p = $('#province option:selected').data('name');
+                const d = $('#district option:selected').data('name');
+                $('#location-badge')
+                    .removeClass('text-danger')
                     .addClass('text-success')
-                    .html(`<i class="fas fa-check-circle me-1"></i> ${name}, ${districtName}, ${provinceName}`);
+                    .html(`<i class="fas fa-check-circle"></i> Giao đến: ${name}, ${d}, ${p}`);
             }
-            
-            validateCheckoutForm();
+            validateCheckoutForm(true);
         });
-        
-        console.log('✅ Đã gắn xong tất cả sự kiện địa chỉ');
     }
 
-    // === LOGIC SỔ ĐỊA CHỈ ===
-    $('#modalAddressBook').on('show.bs.modal', async function () {
-        const wrap = document.getElementById('addressBookList');
-        try {
-            const res = await fetch(`${API_BASE}/api/dia-chi`, { credentials: 'include' });
-            const list = await res.json();
-
-            if (!list || list.length === 0) {
-                wrap.innerHTML = '<div class="p-5 text-center">Bạn chưa có địa chỉ lưu sẵn.</div>';
-                return;
-            }
-
-            wrap.innerHTML = list.map(a => `
-                <div class="list-group-item list-group-item-action btn-select-address" 
-                   data-full="${a.ten_nguoi_nhan}" data-phone="${a.so_dien_thoai}"
-                   data-tinh="${a.tinh_thanh}" data-quan="${a.quan_huyen}"
-                   data-xa="${a.phuong_xa}" data-detail="${a.dia_chi_cu_the}">
-                    <div class="d-flex align-items-start w-100">
-                        <div class="address-icon"><i class="fas fa-home mt-1" style="font-size: 0.8rem;"></i></div>
-                        <div class="flex-grow-1" style="min-width: 0;">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="fw-bold text-truncate">${a.ten_nguoi_nhan}</span>
-                                ${a.mac_dinh ? '<span class="badge bg-dark" style="font-size: 0.65rem;">Mặc định</span>' : ''}
-                            </div>
-                            <div class="small text-secondary mb-1"><i class="fas fa-phone-alt me-1" style="font-size:0.75rem;"></i>${a.so_dien_thoai}</div>
-                            <div class="address-detail-text">
-                                <i class="fas fa-map-marker-alt me-1 text-muted"></i>
-                                ${a.dia_chi_cu_the}, ${a.phuong_xa}, ${a.quan_huyen}, ${a.tinh_thanh}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-
-            $('.btn-select-address').off('click').on('click', function() {
-                const d = $(this).data();
-                $('[name="fullname"]').val(d.full);
-                $('[name="phone"]').val(d.phone);
-                $('[name="address"]').val(d.detail);
-                fillLocationByText(d.tinh, d.quan, d.xa);
-                bootstrap.Modal.getInstance(document.getElementById('modalAddressBook')).hide();
-            });
-        } catch (e) {
-            wrap.innerHTML = '<div class="p-5 text-center text-danger">Lỗi tải địa chỉ.</div>';
-        }
-    });
-
-    async function fillLocationByText(t, q, x) {
-        console.log('📮 Đang điền địa chỉ từ sổ:', {tinh: t, quan: q, xa: x});
-        const pOpt = $(`#province option`).filter(function() { return $(this).text() === t; });
-        if (pOpt.length) {
-            $('#province').val(pOpt.val()).trigger('change');
-            setTimeout(() => {
-                const dOpt = $(`#district option`).filter(function() { return $(this).text() === q; });
-                if (dOpt.length) {
-                    $('#district').val(dOpt.val()).trigger('change');
-                    setTimeout(() => {
-                        const wOpt = $(`#ward option`).filter(function() { return $(this).text() === x; });
-                        if (wOpt.length) $('#ward').val(wOpt.val()).trigger('change');
-                        setTimeout(() => validateCheckoutForm(), 500);
-                    }, 1000);
-                }
-            }, 1000);
-        }
-    }
-
+    // === 4. LOGIC GIỎ HÀNG / MUA NGAY ===
     function checkBuyNowMode() {
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('buy_now') === '1') {
             buyNowMode = true;
-            buyNowSkuId = parseInt(urlParams.get('sku_id')) || null;
-            buyNowQuantity = parseInt(urlParams.get('quantity')) || 1;
-            buyNowProductId = parseInt(urlParams.get('product_id')) || null;
-            buyNowProductName = decodeURIComponent(urlParams.get('product_name') || 'Sản phẩm');
-            buyNowPrice = parseFloat(urlParams.get('price')) || 0;
-            
-            if (!buyNowSkuId) {
-                alert('Thông tin sản phẩm không hợp lệ.');
-                window.location.href = 'shop.php';
-                return false;
-            }
-            return true;
+            buyNowInfo = {
+                sku_id: parseInt(urlParams.get('sku_id')),
+                quantity: parseInt(urlParams.get('quantity')) || 1,
+                product_id: parseInt(urlParams.get('product_id')),
+                product_name: decodeURIComponent(urlParams.get('product_name') || ''),
+                price: parseFloat(urlParams.get('price')) || 0,
+                size: decodeURIComponent(urlParams.get('size_name') || ''),
+                color: decodeURIComponent(urlParams.get('color_name') || '')
+            };
+            $('h2').text('THANH TOÁN MUA NGAY');
         }
-        return false;
     }
 
     function updateUI() {
-        document.getElementById('subtotalText').innerText = vnd(subtotal);
+        $('#subtotalText').text(vnd(subtotal));
+        $('#shippingText').text(vnd(shippingFee));
         if (discountAmount > 0) {
             $('#discountRow').show();
             $('#discountText').text('-' + vnd(discountAmount));
         } else {
             $('#discountRow').hide();
         }
-        document.getElementById('final-total').innerText = vnd(subtotal + shippingFee - discountAmount);
+        $('#final-total').text(vnd(subtotal + shippingFee - discountAmount));
     }
 
-    async function loadBuyNowProduct() {
-        try {
-            const item = {
-                ten_san_pham: buyNowProductName,
-                ma_sku: buyNowSkuCode || ('SKU-' + buyNowSkuId),
-                so_luong: buyNowQuantity,
-                gia_ban: buyNowPrice,
-                thanh_tien: buyNowPrice * buyNowQuantity,
-                ten_kich_co: buyNowSizeName,
-                ten_mau: buyNowColorName
-            };
-            
-            if (buyNowProductId) {
-                try {
-                    const res = await fetch(`${API_BASE}/api/san-pham/${buyNowProductId}`, { 
-                        credentials: 'include' 
-                    });
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.ok && data.san_pham) {
-                            item.ten_san_pham = data.san_pham.ten_san_pham || buyNowProductName;
-                        }
-                    }
-                } catch (e) {
-                    console.error('Không thể lấy thông tin chi tiết sản phẩm:', e);
-                }
-            }
-            
-            document.getElementById('orderCount').innerText = '1';
-            
-            let metaInfo = '';
-            if (buyNowSizeName || buyNowColorName) {
-                metaInfo = `${buyNowSizeName ? `Size: ${buyNowSizeName}` : ''}${buyNowSizeName && buyNowColorName ? ' | ' : ''}${buyNowColorName ? `Màu: ${buyNowColorName}` : ''}`;
-            }
-            
-            document.getElementById('orderItems').innerHTML = `
-                <div class="product-item">
-                    <div class="flex-grow-1">
-                        <div class="product-name">${item.ten_san_pham} <span class="text-muted">x${item.so_luong}</span></div>
-                        <div class="product-meta small text-secondary">
-                            ${item.ma_sku ? `SKU: ${item.ma_sku}` : ''}${item.ma_sku && metaInfo ? ' | ' : ''}${metaInfo}
-                        </div>
+    function loadBuyNowProduct() {
+        const total = buyNowInfo.price * buyNowInfo.quantity;
+        subtotal = total;
+        $('#orderCount').text(1);
+        $('#orderItems').html(`
+            <div class="product-item">
+                <div class="flex-grow-1">
+                    <div class="product-name">${buyNowInfo.product_name} <span class="text-muted">x${buyNowInfo.quantity}</span></div>
+                    <div class="product-meta small text-secondary">
+                        ${buyNowInfo.size ? 'Size: ' + buyNowInfo.size : ''} ${buyNowInfo.color ? '| Màu: ' + buyNowInfo.color : ''}
                     </div>
-                    <div class="product-price">${vnd(item.thanh_tien)}</div>
                 </div>
-            `;
-            
-            cart = { items: [item], tam_tinh: item.thanh_tien };
-            subtotal = item.thanh_tien;
-            updateUI();
-            document.getElementById('btnPlaceOrder').disabled = false;
-            
-        } catch (e) {
-            console.error('Lỗi khi load sản phẩm mua ngay:', e);
-            alert('Không thể load thông tin sản phẩm');
-            window.location.href = 'shop.php';
-        }
-
-        setTimeout(() => validateCheckoutForm(), 100);
+                <div class="product-price">${vnd(total)}</div>
+            </div>
+        `);
+        updateUI();
+        setTimeout(() => validateCheckoutForm(true), 500); // Check ngầm khi load xong
     }
 
     async function loadNormalCart() {
-        const res = await fetch(`${API_BASE}/api/gio-hang`, { credentials: 'include' });
-        const data = await res.json();
-        if (res.status === 401) { 
-            window.location.href = 'login.php'; 
-            return; 
-        }
-        if (!data.ok) return;
-
-        cart = data;
-        subtotal = Number(data.tam_tinh || 0);
-        document.getElementById('orderCount').innerText = data.items.length;
-        document.getElementById('orderItems').innerHTML = data.items.map(it => `
-            <div class="product-item">
-                <div class="flex-grow-1">
-                    <div class="product-name">${it.ten_san_pham} <span class="text-muted">x${it.so_luong}</span></div>
-                    <div class="product-meta small text-secondary">
-                        ${it.ma_sku ? `SKU: ${it.ma_sku} | ` : ''}${it.ten_kich_co || ''} ${it.ten_mau ? `| Màu: ${it.ten_mau}` : ''}
+        try {
+            const res = await fetch(`${API_BASE}/api/gio-hang`, { credentials: 'include' });
+            if (res.status === 401) { window.location.href = 'login.php'; return; }
+            const data = await res.json();
+            
+            if (data.ok) {
+                cart = data;
+                subtotal = Number(data.tam_tinh || 0);
+                $('#orderCount').text(data.items.length);
+                $('#orderItems').html(data.items.map(it => `
+                    <div class="product-item">
+                        <div class="flex-grow-1">
+                            <div class="product-name">${it.ten_san_pham} <span class="text-muted">x${it.so_luong}</span></div>
+                            <div class="product-meta small text-secondary">${it.ten_kich_co || ''} ${it.ten_mau ? '| ' + it.ten_mau : ''}</div>
+                        </div>
+                        <div class="product-price">${vnd(it.thanh_tien)}</div>
                     </div>
-                </div>
-                <div class="product-price">${vnd(it.thanh_tien)}</div>
-            </div>
-        `).join('');
-        
-        updateUI();
-        document.getElementById('btnPlaceOrder').disabled = data.items.length === 0;
-        setTimeout(() => validateCheckoutForm(), 100);
+                `).join(''));
+                updateUI();
+            }
+        } catch(e) { console.error(e); }
+        setTimeout(() => validateCheckoutForm(true), 500); // Check ngầm khi load xong
     }
 
-    // === XỬ LÝ SUBMIT FORM ===
-    document.getElementById('checkoutForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-
-        if (!validateCheckoutForm()) {
-            const firstError = document.querySelector('#checkoutForm .is-invalid');
-            if (firstError) {
-                firstError.focus();
-                firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            } else {
-                alert('Vui lòng chọn đầy đủ địa chỉ giao hàng!');
-            }
-            return;
-        }
-
-        const btn = document.getElementById('btnPlaceOrder');
-        const originalText = btn.innerHTML;
-        const street = document.querySelector('[name="address"]').value.trim();
-        const ward = $('#ward_text').val();
-        const district = $('#district_text').val();
-        const province = $('#province_text').val();
-
-        if (!ward || !district || !province) { 
-            alert('Vui lòng chọn đầy đủ địa chỉ'); 
-            return; 
-        }
-        
-        const fullname = document.querySelector('[name="fullname"]').value.trim();
-        const phone = document.querySelector('[name="phone"]').value.trim();
-        
-        if (!isValidVietnameseName(fullname)) {
-            alert('Họ tên không được chứa số hoặc ký tự đặc biệt.');
-            return;
-        }
-        
-        if (!isValidPhone(phone)) {
-            alert('Số điện thoại phải bắt đầu bằng 0 và có 10-11 chữ số.');
-            return;
-        }
-        
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang đặt hàng...';
-
-        const payload = {
-            nguoi_nhan: fullname,
-            sdt_nguoi_nhan: phone,
-            dia_chi_giao_hang: `${street}, ${ward}, ${district}, ${province}`,
-            ghi_chu: document.querySelector('[name="note"]').value.trim(),
-            phi_van_chuyen: shippingFee,
-            giam_gia: discountAmount,
-            ma_khuyen_mai: discountCodeApplied
-        };
-        
+    // === 5. SỔ ĐỊA CHỈ (Đã khôi phục) ===
+    $('#modalAddressBook').on('show.bs.modal', async function () {
+        const wrap = document.getElementById('addressBookList');
+        wrap.innerHTML = '<div class="p-5 text-center text-muted">Đang tải...</div>';
         try {
-            let endpoint, method;
-            
-            if (buyNowMode) {
-                endpoint = `${API_BASE}/api/don-hang/buy-now`;
-                method = 'POST';
-                payload.sku_id = buyNowSkuId;
-                payload.so_luong = buyNowQuantity;
-            } else {
-                endpoint = `${API_BASE}/api/don-hang`;
-                method = 'POST';
+            const res = await fetch(`${API_BASE}/api/dia-chi`, { credentials: 'include' });
+            const list = await res.json();
+
+            if (!list || list.length === 0) {
+                wrap.innerHTML = '<div class="p-5 text-center">Bạn chưa lưu địa chỉ nào.</div>';
+                return;
             }
-            
-            const res = await fetch(endpoint, {
-                method: method,
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+
+            wrap.innerHTML = list.map(a => `
+                <div class="list-group-item list-group-item-action btn-select-address pointer" 
+                   style="cursor:pointer;"
+                   data-full="${a.ten_nguoi_nhan}" data-phone="${a.so_dien_thoai}"
+                   data-tinh="${a.tinh_thanh}" data-quan="${a.quan_huyen}"
+                   data-xa="${a.phuong_xa}" data-detail="${a.dia_chi_cu_the}">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h6 class="mb-1 fw-bold">${a.ten_nguoi_nhan} ${a.mac_dinh ? '<span class="badge bg-secondary">Mặc định</span>' : ''}</h6>
+                    </div>
+                    <p class="mb-1 small">${a.dia_chi_cu_the}, ${a.phuong_xa}, ${a.quan_huyen}, ${a.tinh_thanh}</p>
+                    <small class="text-muted">SĐT: ${a.so_dien_thoai}</small>
+                </div>
+            `).join('');
+
+            // Gắn sự kiện click chọn địa chỉ
+            $('.btn-select-address').on('click', function() {
+                const d = $(this).data();
+                $('[name="fullname"]').val(d.full);
+                $('[name="phone"]').val(d.phone);
+                $('[name="address"]').val(d.detail);
+                
+                // Điền Tỉnh -> Quận -> Huyện tự động
+                fillLocationByText(d.tinh, d.quan, d.xa);
+                
+                // Đóng modal
+                bootstrap.Modal.getInstance(document.getElementById('modalAddressBook')).hide();
             });
-            
-            const data = await res.json();
-            if (data.ok) {
-                $('#checkoutForm').hide();
-                $('#alertSuccess').html(`
-                    <h4 class="fw-bold">Đặt hàng thành công!</h4>
-                    <p>Mã đơn hàng của bạn là: <strong>${data.ma_don_hang}</strong></p>
-                    <p>Tổng thanh toán: <strong>${vnd(data.tong_tien)}</strong></p>
-                    <a href="shop.php" class="btn btn-dark mt-2">Tiếp tục mua sắm</a>
-                    <a href="profile/orders.php" class="btn btn-outline-dark mt-2 ms-2">Xem đơn hàng</a>
-                `).show();
-            } else {
-                alert(data.error || 'Đặt hàng thất bại');
-                btn.disabled = false;
-                btn.innerHTML = originalText;
-            }
-        } catch (err) { 
-            console.error('Lỗi hệ thống:', err);
-            alert('Lỗi hệ thống'); 
-            btn.disabled = false; 
-            btn.innerHTML = originalText; 
+        } catch (e) {
+            wrap.innerHTML = '<div class="p-4 text-center text-danger">Lỗi tải sổ địa chỉ</div>';
         }
     });
 
-    // === ÁP DỤNG MÃ GIẢM GIÁ ===
+    // Hàm điền địa chỉ tự động (Đệ quy đợi load xong từng cấp)
+    function fillLocationByText(tinh, quan, xa) {
+        // 1. Tìm và chọn Tỉnh
+        const pOpt = $(`#province option`).filter(function() { return $(this).text().trim() === tinh.trim(); });
+        if (pOpt.length) {
+            $('#province').val(pOpt.val()).trigger('change');
+            
+            // Đợi 1 chút để API Quận load xong
+            setTimeout(() => {
+                // 2. Tìm và chọn Quận
+                const dOpt = $(`#district option`).filter(function() { return $(this).text().trim() === quan.trim(); });
+                if (dOpt.length) {
+                    $('#district').val(dOpt.val()).trigger('change');
+                    
+                    // Đợi 1 chút để API Xã load xong
+                    setTimeout(() => {
+                        // 3. Tìm và chọn Xã
+                        const wOpt = $(`#ward option`).filter(function() { return $(this).text().trim() === xa.trim(); });
+                        if (wOpt.length) {
+                            $('#ward').val(wOpt.val()).trigger('change');
+                        }
+                        validateCheckoutForm(false); // Validate lại lần cuối (hiện xanh)
+                    }, 800);
+                }
+            }, 800);
+        }
+    }
+
+    // === 6. MÃ GIẢM GIÁ ===
     document.getElementById('applyDiscount').addEventListener('click', async function() {
         const code = (document.getElementById('discountInput').value || '').trim().toUpperCase();
-        if (!code) { 
-            alert('Vui lòng nhập mã'); 
-            return; 
-        }
-        
-        // Lưu trạng thái hiện tại trước khi thay đổi
-        const currentDiscount = discountAmount;
-        const currentCode = discountCodeApplied;
+        if (!code) { alert('Vui lòng nhập mã'); return; }
         
         const btn = this;
         btn.disabled = true;
-        btn.innerText = 'Đang kiểm tra...';
+        btn.innerText = 'Checking...';
         
         try {
             const res = await fetch('check_voucher.php', {
@@ -839,62 +626,89 @@ include 'header.php';
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ code: code, total: subtotal })
             });
-            
             const data = await res.json();
             
             if (data.status) {
-                // Nếu mã mới hợp lệ, lưu trạng thái cũ để backup
-                previousDiscountAmount = currentDiscount;
-                previousDiscountCode = currentCode;
-                
-                // Cập nhật với mã mới
                 discountAmount = Number(data.discount);
                 discountCodeApplied = data.code;
+                alert('Áp dụng thành công!');
                 updateUI();
-                
-                alert('Áp dụng thành công: ' + data.message);
             } else {
-                // Nếu mã mới KHÔNG hợp lệ
-                if (currentCode) {
-                    // Nếu có mã valid trước đó: khôi phục và hiển thị thông báo có phần "Tự động áp dụng mã trước đó"
-                    discountAmount = currentDiscount;
-                    discountCodeApplied = currentCode;
-                    updateUI();
-                    document.getElementById('discountInput').value = currentCode;
-                    
-                    alert(data.message + '. Tự động áp dụng mã giảm giá trước đó.');
-                } else {
-                    // Nếu CHƯA có mã valid trước đó: chỉ báo lỗi đơn giản, xoá ô input
-                    discountAmount = 0;
-                    discountCodeApplied = '';
-                    updateUI();
-                    document.getElementById('discountInput').value = '';
-                    
-                    alert(data.message); // Chỉ hiển thị lỗi đơn giản
-                }
-            }
-        } catch (e) { 
-            // Nếu có lỗi kết nối
-            if (currentCode) {
-                // Có mã valid trước đó: khôi phục
-                discountAmount = currentDiscount;
-                discountCodeApplied = currentCode;
-                updateUI();
-                document.getElementById('discountInput').value = currentCode;
-                
-                alert('Lỗi kết nối voucher. Đã khôi phục mã giảm giá trước đó.');
-            } else {
-                // Chưa có mã valid: xoá ô input
+                alert(data.message);
                 discountAmount = 0;
                 discountCodeApplied = '';
                 updateUI();
-                document.getElementById('discountInput').value = '';
-                
-                alert('Lỗi kết nối voucher.');
             }
-        } finally { 
-            btn.disabled = false; 
-            btn.innerText = 'Áp dụng'; 
+        } catch (e) { alert('Lỗi kiểm tra voucher'); }
+        finally { btn.disabled = false; btn.innerText = 'Áp dụng'; }
+    });
+
+    // === 7. SUBMIT FORM ===
+    document.getElementById('checkoutForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        // Validate lần cuối (isSilent = false để hiện lỗi đỏ nếu có)
+        if (!validateCheckoutForm(false)) {
+            const errorInput = document.querySelector('.is-invalid');
+            if (errorInput) errorInput.focus();
+            else alert('Vui lòng điền đầy đủ thông tin giao hàng!');
+            return;
+        }
+
+        const btn = document.getElementById('btnPlaceOrder');
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Đang xử lý...';
+
+        const payload = {
+            nguoi_nhan: $('input[name="fullname"]').val().trim(),
+            sdt_nguoi_nhan: $('input[name="phone"]').val().trim(),
+            dia_chi_giao_hang: `${$('input[name="address"]').val().trim()}, ${$('#ward option:selected').text()}, ${$('#district option:selected').text()}, ${$('#province option:selected').text()}`,
+            ghi_chu: $('textarea[name="note"]').val().trim(),
+            phi_van_chuyen: shippingFee,
+            giam_gia: discountAmount,
+            ma_khuyen_mai: discountCodeApplied
+        };
+
+        let endpoint = `${API_BASE}/api/don-hang`;
+        if (buyNowMode) {
+            endpoint = `${API_BASE}/api/don-hang/buy-now`;
+            payload.sku_id = buyNowInfo.sku_id;
+            payload.so_luong = buyNowInfo.quantity;
+        }
+
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            
+            if (data.ok) {
+                $('#checkoutForm').hide();
+                $('#alertSuccess').html(`
+                    <div class="text-center py-5">
+                        <h3 class="fw-bold text-success mb-3"><i class="fas fa-check-circle"></i> Đặt hàng thành công!</h3>
+                        <p>Mã đơn hàng: <strong>${data.ma_don_hang}</strong></p>
+                        <p>Tổng tiền: <strong>${vnd(data.tong_tien)}</strong></p>
+                        <div class="mt-4">
+                            <a href="shop.php" class="btn btn-dark rounded-pill px-4">Tiếp tục mua sắm</a>
+                        </div>
+                    </div>
+                `).show();
+                window.scrollTo(0,0);
+            } else {
+                alert(data.error || 'Lỗi đặt hàng');
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Lỗi kết nối server');
+            btn.disabled = false;
+            btn.innerHTML = originalText;
         }
     });
 </script>
