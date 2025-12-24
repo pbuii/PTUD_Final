@@ -170,29 +170,10 @@ include 'includes/header.php';
         </div>
 
         <?php if ($order['trang_thai'] === 'YEU_CAU_HUY'): ?>
-        <div class="alert alert-warning border-warning shadow-sm mb-4">
-            <h5 class="alert-heading fw-bold"><i class="fas fa-exclamation-triangle me-2"></i>Khách hàng yêu cầu hủy đơn</h5>
-            <p class="mb-2">Lý do: <strong><?php echo htmlspecialchars($order['ly_do_huy']); ?></strong></p>
-            <hr>
-            <div class="d-flex gap-2">
-                <form method="POST" action="" onsubmit="return confirm('Xác nhận ĐỒNG Ý hủy đơn hàng này? Kho sẽ được hoàn lại.')">
-                    <input type="hidden" name="action" value="update_status">
-                    <input type="hidden" name="new_status" value="HUY">
-                    <input type="hidden" name="note" value="Admin chấp thuận yêu cầu hủy">
-                    <button type="submit" class="btn btn-danger">
-                        <i class="fas fa-check me-1"></i> Đồng ý Hủy đơn
-                    </button>
-                </form>
-
-                <form method="POST" action="" onsubmit="return confirm('Từ chối yêu cầu hủy và tiếp tục xử lý đơn?')">
-                    <input type="hidden" name="action" value="update_status">
-                    <input type="hidden" name="new_status" value="CHO_XU_LY"> <input type="hidden" name="note" value="Admin từ chối hủy đơn">
-                    <button type="submit" class="btn btn-success">
-                        <i class="fas fa-times me-1"></i> Từ chối hủy (Tiếp tục đơn)
-                    </button>
-                </form>
+            <div class="alert alert-warning border-warning shadow-sm mb-4">
+                <h5 class="alert-heading fw-bold mb-2"><i class="fas fa-exclamation-triangle me-2"></i>Khách hàng yêu cầu hủy đơn</h5>
+                <p class="mb-0">Lý do: <strong><?php echo htmlspecialchars($order['ly_do_huy']); ?></strong></p>
             </div>
-        </div>
         <?php endif; ?>
 
         <div class="row g-4">
